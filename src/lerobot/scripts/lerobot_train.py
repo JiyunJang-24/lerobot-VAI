@@ -52,6 +52,9 @@ from lerobot.utils.utils import (
     has_method,
     init_logging,
 )
+from lerobot.datasets.lerobot_dataset import (
+    MultiLeRobotDataset,
+)
 
 
 def update_policy(
@@ -318,9 +321,19 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     if is_main_process:
         logging.info("Creating policy")
+
+    if isinstance(dataset, MultiLeRobotDataset):
+        ds_meta = dataset._datasets[0].meta
+        try:
+            ds_meta.stats = dataset.stats['panda']
+            print("Not implementing using cross embodiment normalize yet. We use only panda stats")
+        except:
+            ds_meta.stats = dataset.stats
+    else:
+        ds_meta = dataset.meta
     policy = make_policy(
         cfg=cfg.policy,
-        ds_meta=dataset.meta,
+        ds_meta=ds_meta,
         rename_map=cfg.rename_map,
     )
 
