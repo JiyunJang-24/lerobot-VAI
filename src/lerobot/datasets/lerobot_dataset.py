@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections import defaultdict
 import concurrent.futures
 import contextlib
 import logging
@@ -75,7 +76,13 @@ from lerobot.datasets.video_utils import (
     get_video_duration_in_s,
     get_video_info,
 )
+from lerobot.datasets.visual_cue_utils import (
+    remove_extrinsic_camera_axis_correction,
+    _rescale_make_motion_basis_axis_rgb_tensor_cam_to_world
+)
 from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.configs.train_utils import VISUAL_CUE_MODES
+
 
 CODEBASE_VERSION = "v3.0"
 VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1"}
@@ -1616,6 +1623,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         tolerances_s: dict | None = None,
         download_videos: bool = True,
         video_backend: str | None = None,
+        visual_cue_mode: VISUAL_CUE_MODES = "vanilla"
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -1656,6 +1664,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 "other datasets."
             )
             self.disabled_features.update(extra_keys)
+        self._compute_pad_specs(intersection_features)
 
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
@@ -1663,7 +1672,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # with multiple robots of different ranges. Instead we should have one normalization
         # per robot.
         self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
-
+        self.visual_cue_mode = visual_cue_mode
 
 
     @property
@@ -1759,7 +1768,18 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         else:
             raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
         item = self._datasets[dataset_idx][idx - start_idx]
+        self._get_visual_cues(item)
+
+        if self.pretrain_dynamic_backbone:
+            ang = self.indices_to_angle[dataset_idx]               # e.g., 270.0
+            cls = self.angle_to_class[ang]                         # e.g., 5 (0-based)
+            item["angle_class"] = torch.tensor(cls, dtype=torch.long)
+        item["action"], augmented_info = self.augment_action_sequence(item["action"])
+        item["augmented_info"] = augmented_info
+
+
         item["dataset_index"] = torch.tensor(dataset_idx)
+        item = self._pad_item_inplace(item)
         for data_key in self.disabled_features:
             if data_key in item:
                 del item[data_key]
@@ -1779,3 +1799,183 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             f"  Transformations: {self.image_transforms},\n"
             f")"
         )
+
+    def _compute_pad_specs(self, intersection_features, sample_idx=0):
+        """
+        Creates:
+        self.pad_specs: dict[key] = {"axis": -1, "target": int}
+        and updates:
+        self.disabled_features for truly incompatible keys.
+        """
+        pad_specs = {}
+        mismatched_disable = set()
+
+        # collect shapes/dtypes across datasets for each key
+        shapes_by_key = defaultdict(list)
+        dtypes_by_key = defaultdict(set)
+
+        for repo_id, ds in zip(self.repo_ids, self._datasets, strict=True):
+            for k in intersection_features:
+                info = _get_tensor_shape_dtype(ds, k, sample_idx=sample_idx)
+                if info is None:
+                    continue
+                shape, dtype = info
+                shapes_by_key[k].append((repo_id, shape))
+                dtypes_by_key[k].add(dtype)
+
+        for k, entries in shapes_by_key.items():
+            # dtype mismatch -> 일단 disable (원하면 promote/cast 규칙도 가능)
+            if len(dtypes_by_key[k]) > 1:
+                mismatched_disable.add(k)
+                logging.warning(f"key '{k}' disabled: dtype mismatch across datasets: {dtypes_by_key[k]}")
+                continue
+
+            # shape 분석: last dim만 다르고 나머지는 동일하면 pad 가능
+            shapes = [sh for _, sh in entries]
+            if len(set(shapes)) == 1:
+                continue  # 모두 동일 -> pad 필요 없음
+
+            rank_set = {len(sh) for sh in shapes}
+            if len(rank_set) != 1:
+                mismatched_disable.add(k)
+                logging.warning(f"key '{k}' disabled: rank mismatch across datasets: {entries}")
+                continue
+
+            rank = next(iter(rank_set))
+            if rank == 0:
+                mismatched_disable.add(k)
+                logging.warning(f"key '{k}' disabled: scalar mismatch (?) {entries}")
+                continue
+
+            # 마지막 축 제외한 prefix가 모두 같은지 확인
+            prefixes = {sh[:-1] for sh in shapes}
+            if len(prefixes) != 1:
+                mismatched_disable.add(k)
+                logging.warning(f"key '{k}' disabled: non-last dims differ: {entries}")
+                continue
+
+            max_last = max(sh[-1] for sh in shapes)
+            pad_specs[k] = {"axis": -1, "target": max_last}
+            logging.warning(f"key '{k}' will be padded on axis -1 to target={max_last}. shapes={entries}")
+
+        self.pad_specs = pad_specs
+        self.disabled_features.update(mismatched_disable)
+
+    def _pad_item_inplace(self, item):
+        if not hasattr(self, "pad_specs"):
+            return item
+
+        for k, spec in self.pad_specs.items():
+            if k not in item:
+                continue
+            x = item[k]
+            if not isinstance(x, torch.Tensor):
+                continue
+
+            axis = spec["axis"]
+            target = spec["target"]
+
+            # axis=-1만 지원(원하면 확장 가능)
+            cur = x.shape[axis]
+            if cur == target:
+                continue
+            if cur > target:
+                # 이 경우는 데이터가 더 큰데 target이 작다는 뜻이라, 보통 target을 max로 잡으면 안 발생
+                # 혹시 발생하면 disable or truncate 정책 선택
+                raise ValueError(f"Padding spec target smaller than current for key={k}: cur={cur} target={target}")
+
+            pad_amount = target - cur
+            # torch.nn.functional.pad는 last-dim padding에 (0, pad_amount) 형태
+            import torch.nn.functional as F
+            # F.pad expects pad tuple for last dims: (pad_left, pad_right)
+            x_pad = F.pad(x, (0, pad_amount), mode="constant", value=0)
+            item[k] = x_pad
+
+        return item
+
+    def _get_visual_cues(self, item):
+        try:
+            extrinsic_matrix = item['extrinsic_matrix']
+            extrinsic_matrix = remove_extrinsic_camera_axis_correction(extrinsic_matrix)
+
+            intrinsic_matrix = item['intrinsic_matrix']
+            robot_state = item['observation.state'] #gripper qpos (2), eef pos (3), eef quat (4)
+            img = item['observation.image'] # S * C * H * W
+
+            if "basis" in self.visual_cue_mode:
+                with torch.no_grad():
+                    if self.visual_cue_mode == "basis_rescale":
+                        axis_tensor, origin_xy = _rescale_make_motion_basis_axis_rgb_tensor_cam_to_world(
+                            rgb_tensor=img,                  # (B, 3,H,W)
+                            cam_to_world=extrinsic_matrix,                  # cam_pose = cam_to_world (고정)
+                            intrinsic_matrix=intrinsic_matrix,
+                            robot_eef_abs_poses=robot_state[:, -7:],  # eef pose (B, 7)
+                            origin_robot=True,
+                            origin_fallback="pp",
+                            arrow_len=60,
+                            return_overlay=False,
+                        )
+                        try:
+                            wrist_img = item['observation.wrist_image']
+                            wrist_intrinsic_matrix = item['wrist_intrinsic_matrix']
+                            wrist_extrinsic_matrix = item['wrist_extrinsic_matrix']
+                            wrist_plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(wrist_extrinsic_matrix)
+                            wrist_axis_tensor, wrist_origin_xy = _rescale_make_motion_basis_axis_rgb_tensor_cam_to_world(
+                                rgb_tensor=wrist_img,
+                                cam_to_world=wrist_plucker_extrinsic_matrix,
+                                intrinsic_matrix=wrist_intrinsic_matrix,
+                                robot_eef_abs_poses=robot_state[:, -7:],
+                                origin_robot=True,
+                                origin_fallback="pp",
+                                arrow_len=60,
+                                return_overlay=False,
+                            )
+                            # save_rgb_image(wrist_axis_tensor[0], "tmp_dir/wrist_scaled_axis_tensor.png")
+                            item['observation.wrist_image'] = torch.cat([wrist_img, wrist_axis_tensor], dim=1)
+                        except:
+                            pass
+                    else:
+                        motion_dynamics_basis = self._get_motion_dynamics_basis(intrinsic_matrix, cam_to_world=extrinsic_matrix).reshape(-1)
+                        axis_tensor, origin_xy = self._make_motion_basis_axis_rgb_tensor_cam_to_world(
+                            rgb_tensor=img,                  # (B, 3,H,W)
+                            motion_dynamics_basis=motion_dynamics_basis,
+                            cam_to_world=extrinsic_matrix,                  # cam_pose = cam_to_world (고정)
+                            intrinsic_matrix=intrinsic_matrix,
+                            robot_eef_abs_poses=robot_state[:, -7:],  # eef pose (B, 7)
+                            origin_robot=True,
+                            origin_fallback="pp",
+                            arrow_len=60,
+                            return_overlay=False,
+                        ) # (B, 3, H, W)
+                        try:
+                            wrist_img = item['observation.wrist_image']
+                            wrist_intrinsic_matrix = item['wrist_intrinsic_matrix']
+                            wrist_extrinsic_matrix = item['wrist_extrinsic_matrix']
+                            wrist_plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(wrist_extrinsic_matrix)
+                            wrist_axis_tensor, wrist_origin_xy = _make_motion_basis_wrist_axis_rgb_tensor_cam_to_world(
+                                rgb_tensor=wrist_img,
+                                cam_to_world=wrist_plucker_extrinsic_matrix,
+                                intrinsic_matrix=wrist_intrinsic_matrix,
+                                robot_eef_abs_poses=robot_state[:, -7:],
+                                origin_robot=True,
+                                origin_fallback="pp",
+                                arrow_len=60,
+                                return_overlay=False,
+                            )
+                            # save_rgb_image(wrist_axis_tensor[0], "tmp_dir/wrist_non_scaled_axis_tensor.png")
+                            item['observation.wrist_image'] = torch.cat([wrist_img, wrist_axis_tensor], dim=1)
+                        except:
+                            pass
+                item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
+                save_rgb_image(axis_tensor[0], "tmp_dir/axis_tensor.png")
+                # save_rgb_image(item['observation.image'][0], "tmp_dir/robot_image.png")
+
+        except Exception as e:
+            print(e)
+
+@staticmethod
+def _get_tensor_shape_dtype(ds, k, sample_idx=0):
+        v = ds[sample_idx][k]
+        if not isinstance(v, torch.Tensor):
+            return None
+        return tuple(v.shape), v.dtype

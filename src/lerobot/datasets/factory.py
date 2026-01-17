@@ -108,6 +108,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
+            visual_cue_mod=cfg.policy.visual_cue_mode
         )
 
         logging.info(
