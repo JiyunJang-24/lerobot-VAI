@@ -331,6 +331,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             ds_meta.stats = dataset.stats
     else:
         ds_meta = dataset.meta
+    dataset.meta = ds_meta
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=ds_meta,
