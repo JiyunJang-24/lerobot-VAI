@@ -1759,6 +1759,92 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         else:
             raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
         item = self._datasets[dataset_idx][idx - start_idx]
+
+        try:
+            extrinsic_matrix = item['extrinsic_matrix']
+            intrinsic_matrix = item['intrinsic_matrix']
+            robot_state = item['observation.state'] #gripper qpos (2), eef pos (3), eef quat (4)
+            img = item['observation.image'] # S * C * H * W
+            if self.use_plucker:
+                with torch.no_grad():
+                    plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(extrinsic_matrix)
+                    intrinsic_tensor = intrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)
+                    extrinsic_tensor = plucker_extrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)
+                    plucker_data = self.plucker_embedder(intrinsic_tensor, extrinsic_tensor)
+                    plucker_tensor = einops.rearrange(plucker_data['plucker'], 's h w c -> s c h w')
+                item['observation.image'] = torch.cat([img, plucker_tensor], dim=1)
+
+            elif self.use_dynamics_basis:
+                with torch.no_grad():
+                    plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(extrinsic_matrix)
+                    if self.apply_basis_scale:
+                        axis_tensor, origin_xy = _rescale_make_motion_basis_axis_rgb_tensor_cam_to_world(
+                            rgb_tensor=img,                  # (B, 3,H,W)
+                            cam_to_world=plucker_extrinsic_matrix,                  # cam_pose = cam_to_world (고정)
+                            intrinsic_matrix=intrinsic_matrix,
+                            robot_eef_abs_poses=robot_state[:, -7:],  # eef pose (B, 7)
+                            origin_robot=True,
+                            origin_fallback="pp",
+                            arrow_len=60,
+                            return_overlay=False,
+                        )
+                        try:
+                            wrist_img = item['observation.wrist_image']
+                            wrist_intrinsic_matrix = item['wrist_intrinsic_matrix']
+                            wrist_extrinsic_matrix = item['wrist_extrinsic_matrix']
+                            wrist_plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(wrist_extrinsic_matrix)
+                            wrist_axis_tensor, wrist_origin_xy = _rescale_make_motion_basis_axis_rgb_tensor_cam_to_world(
+                                rgb_tensor=wrist_img,
+                                cam_to_world=wrist_plucker_extrinsic_matrix,
+                                intrinsic_matrix=wrist_intrinsic_matrix,
+                                robot_eef_abs_poses=robot_state[:, -7:],
+                                origin_robot=True,
+                                origin_fallback="pp",
+                                arrow_len=60,
+                                return_overlay=False,
+                            )
+                            # save_rgb_image(wrist_axis_tensor[0], "tmp_dir/wrist_scaled_axis_tensor.png")
+                            item['observation.wrist_image'] = torch.cat([wrist_img, wrist_axis_tensor], dim=1)
+                        except:
+                            pass
+                    else:
+                        motion_dynamics_basis = self._get_motion_dynamics_basis(intrinsic_matrix, cam_to_world=plucker_extrinsic_matrix).reshape(-1)
+                        axis_tensor, origin_xy = self._make_motion_basis_axis_rgb_tensor_cam_to_world(
+                            rgb_tensor=img,                  # (B, 3,H,W)
+                            motion_dynamics_basis=motion_dynamics_basis,
+                            cam_to_world=plucker_extrinsic_matrix,                  # cam_pose = cam_to_world (고정)
+                            intrinsic_matrix=intrinsic_matrix,
+                            robot_eef_abs_poses=robot_state[:, -7:],  # eef pose (B, 7)
+                            origin_robot=True,
+                            origin_fallback="pp",
+                            arrow_len=60,
+                            return_overlay=False,
+                        ) # (B, 3, H, W)
+                        try:
+                            wrist_img = item['observation.wrist_image']
+                            wrist_intrinsic_matrix = item['wrist_intrinsic_matrix']
+                            wrist_extrinsic_matrix = item['wrist_extrinsic_matrix']
+                            wrist_plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(wrist_extrinsic_matrix)
+                            wrist_axis_tensor, wrist_origin_xy = _make_motion_basis_wrist_axis_rgb_tensor_cam_to_world(
+                                rgb_tensor=wrist_img,
+                                cam_to_world=wrist_plucker_extrinsic_matrix,
+                                intrinsic_matrix=wrist_intrinsic_matrix,
+                                robot_eef_abs_poses=robot_state[:, -7:],
+                                origin_robot=True,
+                                origin_fallback="pp",
+                                arrow_len=60,
+                                return_overlay=False,
+                            )
+                            # save_rgb_image(wrist_axis_tensor[0], "tmp_dir/wrist_non_scaled_axis_tensor.png")
+                            item['observation.wrist_image'] = torch.cat([wrist_img, wrist_axis_tensor], dim=1)
+                        except:
+                            pass
+                item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
+                save_rgb_image(axis_tensor[0], "tmp_dir/axis_tensor.png")
+                # save_rgb_image(item['observation.image'][0], "tmp_dir/robot_image.png")
+                
+
+
         item["dataset_index"] = torch.tensor(dataset_idx)
         for data_key in self.disabled_features:
             if data_key in item:
