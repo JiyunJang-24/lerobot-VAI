@@ -71,6 +71,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self_attn_every_n_layers: int = -1,
         expert_width_multiplier: float = 0.5,
         device: str = "auto",
+        visual_cue_mode: str = "none",
     ):
         super().__init__()
         if load_vlm_weights:
@@ -91,6 +92,9 @@ class SmolVLMWithExpertModel(nn.Module):
             self.get_vlm_model().text_model.layers = self.get_vlm_model().text_model.layers[:num_vlm_layers]
         self.num_vlm_layers = len(self.get_vlm_model().text_model.layers)
         self.config = config
+        self.visual_cue_mode = visual_cue_mode
+        self.new_visual_cue_encoder = False
+        self.apply_visual_cue_mode()
         # Smaller lm expert
         lm_expert_config = copy.deepcopy(config.text_config)
         hidden_size = lm_expert_config.hidden_size
@@ -180,14 +184,42 @@ class SmolVLMWithExpertModel(nn.Module):
     def embed_image(self, image: torch.Tensor):
         patch_attention_mask = None
         # Get sequence from the vision encoder
+        if self.new_visual_cue_encoder:
+            rgb = image[:, :3]
+            visual_cue = image[:, 3:]
+        else:
+            rgb = image
+            visual_cue = None
+
         image_hidden_states = (
             self.get_vlm_model()
             .vision_model(
-                pixel_values=image.to(dtype=self.get_vlm_model().vision_model.dtype),
+                pixel_values=rgb.to(dtype=self.get_vlm_model().vision_model.dtype),
                 patch_attention_mask=patch_attention_mask,
             )
             .last_hidden_state
         )
+        if self.new_visual_cue_encoder and visual_cue is not None:
+            # Determine grid size from number of tokens L = s*s
+            b, l, dv = image_hidden_states.shape
+            s = int(l ** 0.5)
+            if s * s != l:
+                raise ValueError("Non-square token grid from vision encoder; cannot align Plücker features")
+
+            # Encode Plücker and pool to s x s grid
+            p_feat = self.visual_cue_encoder(visual_cue)
+            p_feat = F.adaptive_avg_pool2d(p_feat, output_size=(s, s))  # [B, 512, s, s]
+            p_feat = self.visual_cue_out_proj(p_feat)  # [B, Dv, s, s]
+            p_tok = p_feat.flatten(2).transpose(1, 2)  # [B, L, Dv]
+
+            # Concatenate and fuse back to Dv (normalize per token first)
+            if p_tok.dtype != image_hidden_states.dtype:
+                p_tok = p_tok.to(dtype=image_hidden_states.dtype)
+            image_hidden_states = self.vision_ln(image_hidden_states)
+            p_tok = self.visual_cue_ln(p_tok)
+            fused = torch.cat([image_hidden_states, p_tok], dim=-1)  # [B, L, 2*Dv]
+            image_hidden_states = self.vision_fusion_proj(fused)  # [B, L, Dv]
+
         # Modality projection & resampling
         image_hidden_states = self.get_vlm_model().connector(image_hidden_states)
         return image_hidden_states
@@ -548,3 +580,114 @@ class SmolVLMWithExpertModel(nn.Module):
         att_output = att_output.reshape(batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim)
 
         return att_output
+
+    def apply_visual_cue_mode(self):
+        if self.visual_cue_mode == "basis_rescale_concat" or self.visual_cue_mode == "basis_concat":
+            self.vlm.model.vision_model.embeddings.patch_embedding = expand_in_channels_keep_rgb(
+                self.vlm.model.vision_model.embeddings.patch_embedding, new_in_chans=6,
+            )
+            print("patch_embedding: Expanded in_channels to 6 for basis-rescale-based input!")
+        elif self.visual_cue_mode == "plucker_concat":
+            self.vlm.model.vision_model.embeddings.patch_embedding = expand_in_channels_keep_rgb(
+                self.vlm.model.vision_model.embeddings.patch_embedding, new_in_chans=9,
+            )
+            print("patch_embedding: Expanded in_channels to 9 for plucker-based input!")
+
+        elif self.visual_cue_mode == "plucker" or self.visual_cue_mode == "basis" or self.visual_cue_mode == "basis_rescale":
+            # Encode 6-channel Plücker map to a 512-d feature grid
+            in_channels = 3 if self.visual_cue_mode != "plucker" else 6
+            self.visual_cue_encoder = nn.Sequential(
+                nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False),
+                FrozenBatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False),
+                FrozenBatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=False),
+                FrozenBatchNorm2d(256),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1, bias=False),
+                FrozenBatchNorm2d(512),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1, bias=False),
+                FrozenBatchNorm2d(512),
+                nn.ReLU(inplace=True),
+            )
+            # Project to vision hidden size and fuse with SigLIP tokens
+            vision_hidden = int(self.vlm.config.vision_config.hidden_size)
+            self.visual_cue_out_proj = nn.Conv2d(512, vision_hidden, kernel_size=1)
+            self.vision_fusion_proj = nn.Linear(vision_hidden * 2, vision_hidden)
+            # Normalize streams and align dtypes with vision encoder
+            self.vision_ln = nn.LayerNorm(vision_hidden, elementwise_affine=False)
+            self.visual_cue_ln = nn.LayerNorm(vision_hidden, elementwise_affine=False)
+            vf_dtype = self.get_vlm_model().vision_model.dtype
+            self.visual_cue_out_proj = self.visual_cue_out_proj.to(dtype=vf_dtype)
+            self.vision_fusion_proj = self.vision_fusion_proj.to(dtype=vf_dtype)
+            self.new_visual_cue_encoder = True
+            print("Initialized visual cue encoder for {} input!.".format(self.visual_cue_mode))
+
+
+def expand_in_channels_keep_rgb(conv: nn.Conv2d, new_in_chans: int,) -> nn.Conv2d:
+    """
+    conv: 기존 Conv2d (in_chans=3)
+    new_in_chans: 예) 6
+    """
+    assert isinstance(conv, nn.Conv2d)
+    old_w = conv.weight.data
+    old_b = conv.bias.data if conv.bias is not None else None
+
+    old_in = conv.in_channels
+    assert new_in_chans >= old_in
+
+    new_conv = nn.Conv2d(
+        in_channels=new_in_chans,
+        out_channels=conv.out_channels,
+        kernel_size=conv.kernel_size,
+        stride=conv.stride,
+        padding=conv.padding,
+        dilation=conv.dilation,
+        groups=conv.groups,
+        bias=(conv.bias is not None),
+        padding_mode=conv.padding_mode,
+    ).to(device=old_w.device, dtype=old_w.dtype)
+
+    with torch.no_grad():
+        # 1) RGB(기존 3채널) weight 복사
+        new_conv.weight[:, :old_in, :, :].copy_(old_w)
+        # 2) bias 복사
+        if old_b is not None:
+            new_conv.bias.copy_(old_b)
+
+    return new_conv
+
+
+
+class FrozenBatchNorm2d(torch.nn.Module):
+
+    def __init__(self, n, eps=1e-5):
+        super(FrozenBatchNorm2d, self).__init__()
+        self.register_buffer("weight", torch.ones(n))
+        self.register_buffer("bias", torch.zeros(n))
+        self.register_buffer("running_mean", torch.zeros(n))
+        self.register_buffer("running_var", torch.ones(n))
+        self.eps = eps
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
+                              missing_keys, unexpected_keys, error_msgs):
+        num_batches_tracked_key = prefix + 'num_batches_tracked'
+        if num_batches_tracked_key in state_dict:
+            del state_dict[num_batches_tracked_key]
+
+        super(FrozenBatchNorm2d, self)._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict,
+            missing_keys, unexpected_keys, error_msgs)
+
+    def forward(self, x):
+        w = self.weight.reshape(1, -1, 1, 1)
+        b = self.bias.reshape(1, -1, 1, 1)
+        rv = self.running_var.reshape(1, -1, 1, 1)
+        rm = self.running_mean.reshape(1, -1, 1, 1)
+        eps = self.eps
+        scale = w * (rv + eps).rsqrt()
+        bias = b - rm * scale
+        return x * scale + bias
