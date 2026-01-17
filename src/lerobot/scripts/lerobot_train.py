@@ -55,6 +55,101 @@ from lerobot.utils.utils import (
 from lerobot.datasets.lerobot_dataset import (
     MultiLeRobotDataset,
 )
+from collections import defaultdict
+import os
+
+
+def unwrap_model(model):
+    # DDP/FSDP 등으로 감싸진 경우를 대비
+    return getattr(model, "module", model)
+
+def dump_trainable_report(model, out_path="trainable_report.txt", topk=50):
+    model = unwrap_model(model)
+
+    # 1) 파라미터 리스트 수집
+    trainable = []
+    frozen = []
+
+    total_params = 0
+    trainable_params = 0
+
+    # 큰 단위(최상위 모듈)로 집계: "backbone.xxx" -> "backbone"
+    group_stats = defaultdict(lambda: {"trainable": 0, "frozen": 0, "trainable_cnt": 0, "frozen_cnt": 0})
+
+    for name, p in model.named_parameters():
+        n = p.numel()
+        total_params += n
+        group = name.split(".", 1)[0] if "." in name else name  # top-level group
+
+        info = {
+            "name": name,
+            "shape": tuple(p.shape),
+            "numel": n,
+            "requires_grad": bool(p.requires_grad),
+            "dtype": str(p.dtype),
+            "device": str(p.device),
+        }
+
+        if p.requires_grad:
+            trainable.append(info)
+            trainable_params += n
+            group_stats[group]["trainable"] += n
+            group_stats[group]["trainable_cnt"] += 1
+        else:
+            frozen.append(info)
+            group_stats[group]["frozen"] += n
+            group_stats[group]["frozen_cnt"] += 1
+
+    # 2) 콘솔 출력: 큰 단위 요약
+    print("=" * 80)
+    print(f"Total params: {total_params:,}")
+    print(f"Trainable params: {trainable_params:,} ({(trainable_params/total_params*100 if total_params else 0):.2f}%)")
+    print(f"Frozen params: {total_params - trainable_params:,}")
+    print("-" * 80)
+    print("[Top-level module summary]")
+    rows = []
+    for g, st in group_stats.items():
+        rows.append((g, st["trainable"], st["frozen"], st["trainable_cnt"], st["frozen_cnt"]))
+    # trainable numel 기준 내림차순
+    rows.sort(key=lambda x: x[1], reverse=True)
+
+    for g, tr_n, fr_n, tr_c, fr_c in rows[:topk]:
+        total_g = tr_n + fr_n
+        pct = (tr_n / total_g * 100) if total_g else 0.0
+        print(f"- {g:30s} | trainable {tr_n:12,} ({pct:6.2f}%)  | frozen {fr_n:12,}  | (param cnt: tr {tr_c}, fr {fr_c})")
+    if len(rows) > topk:
+        print(f"... ({len(rows)-topk} more groups)")
+    print("=" * 80)
+
+    # 3) txt 저장
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    with open(out_path, "w") as f:
+        f.write("=== Trainable / Frozen Parameter Report ===\n")
+        f.write(f"Total params: {total_params:,}\n")
+        f.write(f"Trainable params: {trainable_params:,} ({(trainable_params/total_params*100 if total_params else 0):.2f}%)\n")
+        f.write(f"Frozen params: {total_params - trainable_params:,}\n\n")
+
+        f.write("=== Top-level module summary ===\n")
+        for g, tr_n, fr_n, tr_c, fr_c in rows:
+            total_g = tr_n + fr_n
+            pct = (tr_n / total_g * 100) if total_g else 0.0
+            f.write(f"- {g} | trainable {tr_n:,} ({pct:.2f}%) | frozen {fr_n:,} | (param cnt: tr {tr_c}, fr {fr_c})\n")
+        f.write("\n")
+
+        def write_param_list(title, plist):
+            f.write(f"=== {title} (count={len(plist)}) ===\n")
+            for info in plist:
+                f.write(
+                    f"{info['name']}\tshape={info['shape']}\tnumel={info['numel']:,}\t"
+                    f"requires_grad={info['requires_grad']}\tdtype={info['dtype']}\tdevice={info['device']}\n"
+                )
+            f.write("\n")
+
+        # 이름 전체 덤프
+        write_param_list("Trainable parameters", trainable)
+        write_param_list("Frozen parameters", frozen)
+
+    print(f"[Saved] {out_path}")
 
 
 def update_policy(
@@ -427,6 +522,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             env_preprocessor, env_postprocessor = make_env_pre_post_processors(
                 env_cfg=cfg.env, policy_cfg=cfg.policy
             )
+        dump_trainable_report(policy, out_path="trainable_report.txt")
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
@@ -497,7 +593,6 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
-        import pudb; pudb.set_trace()
         batch = preprocessor(batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 

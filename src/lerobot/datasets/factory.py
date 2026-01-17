@@ -90,7 +90,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             datasets = cfg.dataset.repo_id.strip('[]').strip("''").split(';')
         else:
             datasets = cfg.dataset.repo_id.strip('[]').strip("''").split(',')
-        datasets = [x.strip() for x in datasets]
+        datasets = [x.strip().replace("'", "") for x in datasets]
         delta_timestamps = {}
         meta_data_dict = {}
         episodes_dict = {}
@@ -108,7 +108,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
-            visual_cue_mod=cfg.policy.visual_cue_mode
+            visual_cue_mode=cfg.policy.visual_cue_mode
         )
 
         logging.info(

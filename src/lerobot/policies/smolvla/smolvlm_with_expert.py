@@ -23,6 +23,7 @@ from transformers import (
     AutoProcessor,
     SmolVLMForConditionalGeneration,
 )
+import torch.nn.functional as F
 
 
 def apply_rope(x, positions, max_wavelength=10_000):
@@ -207,7 +208,7 @@ class SmolVLMWithExpertModel(nn.Module):
                 raise ValueError("Non-square token grid from vision encoder; cannot align Plücker features")
 
             # Encode Plücker and pool to s x s grid
-            p_feat = self.visual_cue_encoder(visual_cue)
+            p_feat = self.visual_cue_encoder(visual_cue).to(dtype=image_hidden_states.dtype)  # [B, 512, H, W]
             p_feat = F.adaptive_avg_pool2d(p_feat, output_size=(s, s))  # [B, 512, s, s]
             p_feat = self.visual_cue_out_proj(p_feat)  # [B, Dv, s, s]
             p_tok = p_feat.flatten(2).transpose(1, 2)  # [B, L, Dv]
@@ -586,7 +587,7 @@ class SmolVLMWithExpertModel(nn.Module):
             self.vlm.model.vision_model.embeddings.patch_embedding = expand_in_channels_keep_rgb(
                 self.vlm.model.vision_model.embeddings.patch_embedding, new_in_chans=6,
             )
-            print("patch_embedding: Expanded in_channels to 6 for basis-rescale-based input!")
+            print("patch_embedding: Expanded in_channels to 6 for {}-based input!".format(self.visual_cue_mode))
         elif self.visual_cue_mode == "plucker_concat":
             self.vlm.model.vision_model.embeddings.patch_embedding = expand_in_channels_keep_rgb(
                 self.vlm.model.vision_model.embeddings.patch_embedding, new_in_chans=9,

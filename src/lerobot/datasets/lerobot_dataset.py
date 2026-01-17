@@ -78,7 +78,11 @@ from lerobot.datasets.video_utils import (
 )
 from lerobot.datasets.visual_cue_utils import (
     remove_extrinsic_camera_axis_correction,
-    _rescale_make_motion_basis_axis_rgb_tensor_cam_to_world
+    _rescale_make_motion_basis_axis_rgb_tensor_cam_to_world,
+    _get_motion_dynamics_basis,
+    _make_motion_basis_axis_rgb_tensor_cam_to_world,
+    _make_motion_basis_wrist_axis_rgb_tensor_cam_to_world,
+    save_rgb_image,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.configs.train_utils import VISUAL_CUE_MODES
@@ -1768,16 +1772,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         else:
             raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
         item = self._datasets[dataset_idx][idx - start_idx]
-        self._get_visual_cues(item)
-
-        if self.pretrain_dynamic_backbone:
-            ang = self.indices_to_angle[dataset_idx]               # e.g., 270.0
-            cls = self.angle_to_class[ang]                         # e.g., 5 (0-based)
-            item["angle_class"] = torch.tensor(cls, dtype=torch.long)
-        item["action"], augmented_info = self.augment_action_sequence(item["action"])
-        item["augmented_info"] = augmented_info
-
-
+        item = self._get_visual_cues(item)
         item["dataset_index"] = torch.tensor(dataset_idx)
         item = self._pad_item_inplace(item)
         for data_key in self.disabled_features:
@@ -1904,7 +1899,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
             if "basis" in self.visual_cue_mode:
                 with torch.no_grad():
-                    if self.visual_cue_mode == "basis_rescale":
+                    if self.visual_cue_mode == "basis_rescale" or self.visual_cue_mode == "basis_rescale_concat":
                         axis_tensor, origin_xy = _rescale_make_motion_basis_axis_rgb_tensor_cam_to_world(
                             rgb_tensor=img,                  # (B, 3,H,W)
                             cam_to_world=extrinsic_matrix,                  # cam_pose = cam_to_world (고정)
@@ -1935,8 +1930,8 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                         except:
                             pass
                     else:
-                        motion_dynamics_basis = self._get_motion_dynamics_basis(intrinsic_matrix, cam_to_world=extrinsic_matrix).reshape(-1)
-                        axis_tensor, origin_xy = self._make_motion_basis_axis_rgb_tensor_cam_to_world(
+                        motion_dynamics_basis = _get_motion_dynamics_basis(intrinsic_matrix, cam_to_world=extrinsic_matrix).reshape(-1)
+                        axis_tensor, origin_xy = _make_motion_basis_axis_rgb_tensor_cam_to_world(
                             rgb_tensor=img,                  # (B, 3,H,W)
                             motion_dynamics_basis=motion_dynamics_basis,
                             cam_to_world=extrinsic_matrix,                  # cam_pose = cam_to_world (고정)
@@ -1967,11 +1962,12 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                         except:
                             pass
                 item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
-                save_rgb_image(axis_tensor[0], "tmp_dir/axis_tensor.png")
+                # save_rgb_image(axis_tensor[0], "tmp_dir/axis_tensor.png")
                 # save_rgb_image(item['observation.image'][0], "tmp_dir/robot_image.png")
 
         except Exception as e:
             print(e)
+        return item
 
 @staticmethod
 def _get_tensor_shape_dtype(ds, k, sample_idx=0):
