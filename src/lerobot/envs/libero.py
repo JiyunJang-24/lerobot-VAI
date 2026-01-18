@@ -31,6 +31,8 @@ from libero.libero.envs import OffScreenRenderEnv
 
 from lerobot.processor import RobotObservation
 
+from robosuite.utils import camera_utils as CU
+
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     """Normalize camera_name into a non-empty list of strings."""
@@ -211,6 +213,14 @@ class LiberoEnv(gym.Env):
                             ),
                         }
                     ),
+                    "cam_info": spaces.Dict(
+                        {
+                            "intrinsic_matrix": spaces.Box(low=-np.inf, high=np.inf, shape=(3, 3), dtype=np.float64),
+                            "extrinsic_matrix": spaces.Box(low=-np.inf, high=np.inf, shape=(4, 4), dtype=np.float64),
+                            "wrist_intrinsic_matrix": spaces.Box(low=-np.inf, high=np.inf, shape=(3, 3), dtype=np.float64),
+                            "wrist_extrinsic_matrix": spaces.Box(low=-np.inf, high=np.inf, shape=(4, 4), dtype=np.float64),
+                        }
+                    )
                 }
             )
 
@@ -241,9 +251,16 @@ class LiberoEnv(gym.Env):
 
     def _format_raw_obs(self, raw_obs: RobotObservation) -> RobotObservation:
         images = {}
+        cam_info = {}
         for camera_name in self.camera_name:
             image = raw_obs[camera_name]
             images[self.camera_name_mapping[camera_name]] = image
+
+            intrinsic_matrix, extrinsic_matrix = self._get_extrinsic_intrinsic(camera_name)
+            # Hard coded ... SRY
+            cam_info_prefix = "wrist_" if "eye_in_hand" in camera_name else ""
+            cam_info[f"{cam_info_prefix}intrinsic_matrix"] = intrinsic_matrix
+            cam_info[f"{cam_info_prefix}extrinsic_matrix"] = extrinsic_matrix
 
         eef_pos = raw_obs.get("robot0_eef_pos")
         eef_quat = raw_obs.get("robot0_eef_quat")
@@ -271,6 +288,7 @@ class LiberoEnv(gym.Env):
                     "vel": joint_vel,  # (7,)
                 },
             },
+            "cam_info": cam_info
         }
         if self.obs_type == "pixels":
             return {"pixels": images.copy()}
@@ -289,6 +307,14 @@ class LiberoEnv(gym.Env):
             f"The observation type '{self.obs_type}' is not supported in LiberoEnv. "
             "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
         )
+
+    def _get_extrinsic_intrinsic(self, camera_name: str):
+        sim = self._env.env.sim
+        env_cam_name = camera_name.replace("_image", "")
+        intrinsic_matrix = CU.get_camera_intrinsic_matrix(sim, env_cam_name, self.observation_height, self.observation_width)
+        extrinsic_matrix = CU.get_camera_extrinsic_matrix(sim, env_cam_name)
+
+        return intrinsic_matrix, extrinsic_matrix
 
     def reset(self, seed=None, **kwargs):
         super().reset(seed=seed)

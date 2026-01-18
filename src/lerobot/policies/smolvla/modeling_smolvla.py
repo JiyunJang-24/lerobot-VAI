@@ -288,6 +288,13 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
+        # Attach images to generate visual cue
+        # @JIYUN Here
+        import pudb; pudb.set_trace()
+        if self.config.visual_cue_mode != "vanilla":
+            visual_cue = batch["visual_cue"]
+            images = torch.cat([images, visual_cue], dim=1)
+
         actions = self.model.sample_actions(
             images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
         )
@@ -306,6 +313,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
         return batch
+
+    def _generate_visual_cue(self, images, state):
+        pass
 
     @torch.no_grad()
     def predict_action_chunk(
