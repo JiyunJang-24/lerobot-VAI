@@ -20,6 +20,8 @@ from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
 
+from tqdm import tqdm
+
 import torch
 from accelerate import Accelerator
 from termcolor import colored
@@ -590,7 +592,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
 
-    for _ in range(step, cfg.steps):
+    for _ in tqdm(range(step, cfg.steps)):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         batch = preprocessor(batch)
