@@ -1675,6 +1675,8 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # TODO(rcadene, aliberts): We should not perform this aggregation for datasets
         # with multiple robots of different ranges. Instead we should have one normalization
         # per robot.
+        for dataset in self._datasets:
+            dataset.meta.stats.pop('observation.environment_state')
         self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
         self.visual_cue_mode = visual_cue_mode
 
