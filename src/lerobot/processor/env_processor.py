@@ -18,8 +18,7 @@ from dataclasses import dataclass
 import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.utils.constants import OBS_IMAGES, OBS_PREFIX, OBS_STATE, OBS_STR
-
+from lerobot.utils.constants import OBS_IMAGES, OBS_PREFIX, OBS_STATE, OBS_CAM_INFO, OBS_STR
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
 
@@ -228,3 +227,4 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
 
     def observation(self, observation):
         return self._process_observation(observation)
+    

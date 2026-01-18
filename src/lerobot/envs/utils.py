@@ -30,7 +30,7 @@ from torch import Tensor
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.envs.configs import EnvConfig
 from lerobot.processor import RobotObservation
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
+from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_CAM_INFO, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 
 
@@ -106,6 +106,20 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
     if "camera_obs" in observations:
         return_observations[f"{OBS_STR}.camera_obs"] = observations["camera_obs"]
+
+
+    # Data for visual cue
+    if "cam_info" in observations:
+        cam_info = observations["cam_info"]
+        return_observations[OBS_CAM_INFO] = {}
+        if "extrinsic_matrix" in cam_info:
+            return_observations[OBS_CAM_INFO]["extrinsic_matrix"] = torch.from_numpy(cam_info["extrinsic_matrix"])
+        if "intrinsic_matrix" in cam_info:
+            return_observations[OBS_CAM_INFO]["intrinsic_matrix"] = torch.from_numpy(cam_info["intrinsic_matrix"])
+        if "wrist_extrinsic_matrix" in cam_info:
+            return_observations[OBS_CAM_INFO]["wrist_extrinsic_matrix"] = torch.from_numpy(cam_info["wrist_extrinsic_matrix"])
+        if "wrist_intrinsic_matrix" in cam_info:
+            return_observations[OBS_CAM_INFO]["wrist_intrinsic_matrix"] = torch.from_numpy(cam_info["wrist_intrinsic_matrix"])
 
     return return_observations
 
