@@ -19,7 +19,6 @@ import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
 from lerobot.utils.constants import OBS_IMAGES, OBS_PREFIX, OBS_STATE, OBS_CAM_INFO, OBS_STR
-
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
 
@@ -80,16 +79,6 @@ class LiberoProcessorStep(ObservationProcessorStep):
                 state = state.unsqueeze(0)
 
             processed_obs[OBS_STATE] = state
-
-        # @JIYUN create visual cues
-        import pudb; pudb.set_trace()
-        intrinsic_matrix = processed_obs[OBS_CAM_INFO]["intrinsic_matrix"]
-        extrinsic_matrix = processed_obs[OBS_CAM_INFO]["extrinsic_matrix"]
-        wrist_intrinsic_matrix = processed_obs[OBS_CAM_INFO]["wrist_intrinsic_matrix"]
-        wrist_extrinsic_matrix = processed_obs[OBS_CAM_INFO]["wrist_extrinsic_matrix"]
-
-        processed_obs["visual_cue"] = torch.zeros(1, 128, 128, 3)
-
         return processed_obs
 
     def transform_features(
@@ -238,3 +227,4 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
 
     def observation(self, observation):
         return self._process_observation(observation)
+    

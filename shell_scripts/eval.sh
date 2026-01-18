@@ -11,6 +11,7 @@ export MUJOCO_GL=osmesa
 python3 /root/Desktop/workspace/jiyun/lerobot-VAI/src/lerobot/scripts/lerobot_eval.py \
   --policy.path=lerobot/smolvla_base \
   --policy.visual_cue_mode=vanilla \
+  --policy.code_mode=eval \
   --env.type=libero \
   --env.task=libero_spatial \
   --eval.n_episodes=1 \

@@ -73,6 +73,7 @@ class SmolVLMWithExpertModel(nn.Module):
         expert_width_multiplier: float = 0.5,
         device: str = "auto",
         visual_cue_mode: str = "none",
+        code_mode: str = "train",
     ):
         super().__init__()
         if load_vlm_weights:
@@ -95,6 +96,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self.config = config
         self.visual_cue_mode = visual_cue_mode
         self.new_visual_cue_encoder = False
+        self.code_mode = code_mode
         self.apply_visual_cue_mode()
         # Smaller lm expert
         lm_expert_config = copy.deepcopy(config.text_config)
@@ -583,49 +585,63 @@ class SmolVLMWithExpertModel(nn.Module):
         return att_output
 
     def apply_visual_cue_mode(self):
-        if self.visual_cue_mode == "basis_rescale_concat" or self.visual_cue_mode == "basis_concat":
-            self.vlm.model.vision_model.embeddings.patch_embedding = expand_in_channels_keep_rgb(
-                self.vlm.model.vision_model.embeddings.patch_embedding, new_in_chans=6,
-            )
-            print("patch_embedding: Expanded in_channels to 6 for {}-based input!".format(self.visual_cue_mode))
-        elif self.visual_cue_mode == "plucker_concat":
-            self.vlm.model.vision_model.embeddings.patch_embedding = expand_in_channels_keep_rgb(
-                self.vlm.model.vision_model.embeddings.patch_embedding, new_in_chans=9,
-            )
-            print("patch_embedding: Expanded in_channels to 9 for plucker-based input!")
+        if self.code_mode == "train":
+            if self.visual_cue_mode == "basis_rescale_concat" or self.visual_cue_mode == "basis_concat":
+                self.vlm.model.vision_model.embeddings.patch_embedding = expand_in_channels_keep_rgb(
+                    self.vlm.model.vision_model.embeddings.patch_embedding, new_in_chans=6,
+                )
+                print("patch_embedding: Expanded in_channels to 6 for {}-based input!".format(self.visual_cue_mode))
+            elif self.visual_cue_mode == "plucker_concat":
+                self.vlm.model.vision_model.embeddings.patch_embedding = expand_in_channels_keep_rgb(
+                    self.vlm.model.vision_model.embeddings.patch_embedding, new_in_chans=9,
+                )
+                print("patch_embedding: Expanded in_channels to 9 for plucker-based input!")
 
-        elif self.visual_cue_mode == "plucker" or self.visual_cue_mode == "basis" or self.visual_cue_mode == "basis_rescale":
-            # Encode 6-channel Plücker map to a 512-d feature grid
-            in_channels = 3 if self.visual_cue_mode != "plucker" else 6
-            self.visual_cue_encoder = nn.Sequential(
-                nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False),
-                FrozenBatchNorm2d(64),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False),
-                FrozenBatchNorm2d(128),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=False),
-                FrozenBatchNorm2d(256),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1, bias=False),
-                FrozenBatchNorm2d(512),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1, bias=False),
-                FrozenBatchNorm2d(512),
-                nn.ReLU(inplace=True),
-            )
-            # Project to vision hidden size and fuse with SigLIP tokens
-            vision_hidden = int(self.vlm.config.vision_config.hidden_size)
-            self.visual_cue_out_proj = nn.Conv2d(512, vision_hidden, kernel_size=1)
-            self.vision_fusion_proj = nn.Linear(vision_hidden * 2, vision_hidden)
-            # Normalize streams and align dtypes with vision encoder
-            self.vision_ln = nn.LayerNorm(vision_hidden, elementwise_affine=False)
-            self.visual_cue_ln = nn.LayerNorm(vision_hidden, elementwise_affine=False)
-            vf_dtype = self.get_vlm_model().vision_model.dtype
-            self.visual_cue_out_proj = self.visual_cue_out_proj.to(dtype=vf_dtype)
-            self.vision_fusion_proj = self.vision_fusion_proj.to(dtype=vf_dtype)
-            self.new_visual_cue_encoder = True
-            print("Initialized visual cue encoder for {} input!.".format(self.visual_cue_mode))
+            elif self.visual_cue_mode == "plucker" or self.visual_cue_mode == "basis" or self.visual_cue_mode == "basis_rescale":
+                # Encode 6-channel Plücker map to a 512-d feature grid
+                in_channels = 3 if self.visual_cue_mode != "plucker" else 6
+                self.visual_cue_encoder = nn.Sequential(
+                    nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False),
+                    FrozenBatchNorm2d(64),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False),
+                    FrozenBatchNorm2d(128),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=False),
+                    FrozenBatchNorm2d(256),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1, bias=False),
+                    FrozenBatchNorm2d(512),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1, bias=False),
+                    FrozenBatchNorm2d(512),
+                    nn.ReLU(inplace=True),
+                )
+                # Project to vision hidden size and fuse with SigLIP tokens
+                vision_hidden = int(self.vlm.config.vision_config.hidden_size)
+                self.visual_cue_out_proj = nn.Conv2d(512, vision_hidden, kernel_size=1)
+                self.vision_fusion_proj = nn.Linear(vision_hidden * 2, vision_hidden)
+                # Normalize streams and align dtypes with vision encoder
+                self.vision_ln = nn.LayerNorm(vision_hidden, elementwise_affine=False)
+                self.visual_cue_ln = nn.LayerNorm(vision_hidden, elementwise_affine=False)
+                vf_dtype = self.get_vlm_model().vision_model.dtype
+                self.visual_cue_out_proj = self.visual_cue_out_proj.to(dtype=vf_dtype)
+                self.vision_fusion_proj = self.vision_fusion_proj.to(dtype=vf_dtype)
+                self.new_visual_cue_encoder = True
+                print("Initialized visual cue encoder for {} input!.".format(self.visual_cue_mode))
+        else:
+            print("EVAL mode")
+            if self.visual_cue_mode == "basis_rescale_concat" or self.visual_cue_mode == "basis_concat" or self.visual_cue_mode == "plucker_concat":
+                print("EVAL: Expanded in_channels for {}-based input!".format(self.visual_cue_mode))
+                print("Current Model patch embedding in channels: ", self.vlm.model.vision_model.embeddings.patch_embedding.in_channels) 
+
+            elif self.visual_cue_mode == "plucker" or self.visual_cue_mode == "basis" or self.visual_cue_mode == "basis_rescale":
+                print("EVAL: Initialized visual cue encoder for {} input!.".format(self.visual_cue_mode))
+                #check if visual cue encoder exists
+                if not hasattr(self, 'visual_cue_encoder'):
+                    print("visual_cue_encoder not found in eval mode !!!!")
+                else:
+                    print("visual_cue_encoder found in eval mode !!!!")               
 
 
 def expand_in_channels_keep_rgb(conv: nn.Conv2d, new_in_chans: int,) -> nn.Conv2d:
