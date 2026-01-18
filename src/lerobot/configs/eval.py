@@ -41,6 +41,9 @@ class EvalPipelineConfig:
     # Explicit consent to execute remote code from the Hub (required for hub environments).
     trust_remote_code: bool = False
 
+    # CUSTOM
+    visual_cue_mode: str = "vanilla"
+
     def __post_init__(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
