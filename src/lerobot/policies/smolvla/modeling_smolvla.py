@@ -496,7 +496,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
             extrinsic_matrix = remove_extrinsic_camera_axis_correction(extrinsic_matrix)
 
             intrinsic_matrix = item['observation.cam_info']['intrinsic_matrix'].to(torch.float32)
-            robot_state = item['observation.state'] #eef pos (3), eef quat (4), gripper qpos (2), 
+            robot_state = item['observation.cam_info']['unnormalized_state'] #eef pos (3), eef quat (4), gripper qpos (2),
             img = item['observation.images.camera1'] # S * C * H * W
 
             if "basis" in self.config.visual_cue_mode:
@@ -570,7 +570,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         except Exception as e:
             print(e)
         return item
-    
+
 def pad_tensor(tensor, max_len, pad_value=0):
     """
     Efficiently pads a tensor along sequence dimension to match max_len.
