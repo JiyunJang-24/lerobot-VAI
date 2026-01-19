@@ -292,7 +292,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
         images, img_masks = self.prepare_images(batch)
         #TODO WS: check state is normalized ? and state is same as training ?
         state = self.prepare_state(batch)
-        import pudb; pudb.set_trace()
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
