@@ -55,7 +55,8 @@ class LiberoProcessorStep(ObservationProcessorStep):
                 img = processed_obs[key]
 
                 # Flip both H and W
-                img = torch.flip(img, dims=[2, 3])
+                img = torch.flip(img, dims=[2])
+                # img = torch.flipud(img)
 
                 processed_obs[key] = img
         # Process robot_state into a flat state vector
@@ -69,16 +70,19 @@ class LiberoProcessorStep(ObservationProcessorStep):
             gripper_qpos = robot_state["gripper"]["qpos"]  # (B, 2,)
 
             # Convert quaternion to axis-angle
-            eef_axisangle = self._quat2axisangle(eef_quat)  # (B, 3)
-            # Concatenate into a single state vector
-            state = torch.cat((eef_pos, eef_axisangle, gripper_qpos), dim=-1)
-
+            #TODO check this function
+            # eef_axisangle = self._quat2axisangle(eef_quat)  # (B, 3)
+            # # Concatenate into a single state vector
+            # state = torch.cat((eef_pos, eef_axisangle, gripper_qpos), dim=-1)
+            state = torch.cat((gripper_qpos, eef_pos, eef_quat), dim=-1)
+            # state = torch.cat((eef_pos, eef_quat, gripper_qpos), dim=-1)
             # ensure float32
             state = state.float()
             if state.dim() == 1:
                 state = state.unsqueeze(0)
 
             processed_obs[OBS_STATE] = state
+            processed_obs['observation.cam_info']['unnormalized_state'] = state
         return processed_obs
 
     def transform_features(

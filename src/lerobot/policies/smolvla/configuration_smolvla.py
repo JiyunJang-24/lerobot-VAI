@@ -106,7 +106,7 @@ class SmolVLAConfig(PreTrainedConfig):
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
     visual_cue_mode: str = "none"  # Options are: "none", "basis", "basis-concat"
-    code_mode: str = "train"  # Options are: "train", "eval"
+
     def __post_init__(self):
         super().__post_init__()
 
