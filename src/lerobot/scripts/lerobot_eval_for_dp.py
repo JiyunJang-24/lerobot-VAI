@@ -139,6 +139,8 @@ def rollout(
     # Reset the policy and environments.
     policy.reset()
     observation, info = env.reset(seed=seeds)
+    env = rotate_recolor_dataset.change_object_transparency(env, object_name="akita_black_bowl_2_main", alpha=0.0, debug=True)
+    observation, reward, terminated, truncated, info = env.step(np.array([[0,0,0,0,0,0,0]], dtype=np.float32))
     if render_callback is not None:
         render_callback(env)
 
@@ -147,6 +149,7 @@ def rollout(
     all_rewards = []
     all_successes = []
     all_dones = []
+
     step = 0
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
@@ -166,7 +169,7 @@ def rollout(
 
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
-        observation = add_envs_task(env, observation)
+        observation = add_envs_task(env, observation, for_dp=True)
 
         # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
         observation = env_preprocessor(observation)

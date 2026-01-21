@@ -167,10 +167,13 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
             )
 
 
-def add_envs_task(env: gym.vector.VectorEnv, observation: RobotObservation) -> RobotObservation:
+def add_envs_task(env: gym.vector.VectorEnv, observation: RobotObservation, for_dp=False) -> RobotObservation:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
     if hasattr(env.envs[0], "task_description"):
-        task_result = env.call("task_description")
+        if for_dp:
+            task_result = ('pick up the black bowl and place it on the plate',)
+        else:
+            task_result = env.call("task_description")
 
         if isinstance(task_result, tuple):
             task_result = list(task_result)

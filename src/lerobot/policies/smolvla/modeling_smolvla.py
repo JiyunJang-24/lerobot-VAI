@@ -290,6 +290,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
             if k in self._queues and k != ACTION:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
         images, img_masks = self.prepare_images(batch)
+        #TODO WS: check state is normalized ? and state is same as training ?
         state = self.prepare_state(batch)
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
@@ -344,7 +345,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         )
 
         self.eval()
-        if self.config.visual_cue_mode is not "vanilla":
+        if self.config.visual_cue_mode != "vanilla":
             batch = self._get_visual_cues(batch)
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
@@ -381,6 +382,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
         images, img_masks = self.prepare_images(batch)
+        #TODO WS: check state is normalized ?
         state = self.prepare_state(batch)
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
@@ -492,12 +494,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
     def _get_visual_cues(self, item):
         try:
-            extrinsic_matrix = item['observation.cam_info']['extrinsic_matrix'].to(torch.float32)
+            extrinsic_matrix = item['observation.cam_info']['extrinsic_matrix'].to(torch.float32).squeeze(0)
             extrinsic_matrix = remove_extrinsic_camera_axis_correction(extrinsic_matrix)
 
-            intrinsic_matrix = item['observation.cam_info']['intrinsic_matrix'].to(torch.float32)
-            robot_state = item['observation.state'] #eef pos (3), eef quat (4), gripper qpos (2), 
-            img = item['observation.images.camera1'] # S * C * H * W
+            intrinsic_matrix = item['observation.cam_info']['intrinsic_matrix'].to(torch.float32).squeeze(0)
+            robot_state = item['observation.cam_info']['unnormalized_state'] # gripper qpos (2), eef pos (3), eef quat (4),
+            img = item['observation.image'] # S * C * H * W
 
             if "basis" in self.config.visual_cue_mode:
                 with torch.no_grad():
@@ -506,29 +508,29 @@ class SmolVLAPolicy(PreTrainedPolicy):
                             rgb_tensor=img,                  # (B, 3,H,W)
                             cam_to_world=extrinsic_matrix,                  # cam_pose = cam_to_world (고정)
                             intrinsic_matrix=intrinsic_matrix,
-                            robot_eef_abs_poses=robot_state[:, :7],  # eef pose (B, 7)
+                            robot_eef_abs_poses=robot_state[:, -7:],  # eef pose (B, 7)
                             origin_robot=True,
                             origin_fallback="pp",
                             arrow_len=60,
                             return_overlay=False,
                         )
                         try:
-                            wrist_img = item['observation.images.camera2']
-                            wrist_intrinsic_matrix = item['observation.cam_info']['wrist_intrinsic_matrix'].to(torch.float32)
-                            wrist_extrinsic_matrix = item['observation.cam_info']['wrist_extrinsic_matrix'].to(torch.float32)
+                            wrist_img = item['observation.wrist_image']
+                            wrist_intrinsic_matrix = item['observation.cam_info']['wrist_intrinsic_matrix'].to(torch.float32).squeeze(0)
+                            wrist_extrinsic_matrix = item['observation.cam_info']['wrist_extrinsic_matrix'].to(torch.float32).squeeze(0)
                             wrist_plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(wrist_extrinsic_matrix)
                             wrist_axis_tensor, wrist_origin_xy = _rescale_make_motion_basis_axis_rgb_tensor_cam_to_world(
                                 rgb_tensor=wrist_img,
                                 cam_to_world=wrist_plucker_extrinsic_matrix,
                                 intrinsic_matrix=wrist_intrinsic_matrix,
-                                robot_eef_abs_poses=robot_state[:, :7],
+                                robot_eef_abs_poses=robot_state[:, -7:],
                                 origin_robot=True,
                                 origin_fallback="pp",
                                 arrow_len=60,
                                 return_overlay=False,
                             )
                             # save_rgb_image(wrist_axis_tensor[0], "tmp_dir/wrist_scaled_axis_tensor.png")
-                            item['observation.images.camera2'] = torch.cat([wrist_img, wrist_axis_tensor], dim=1)
+                            item['observation.wrist_image'] = torch.cat([wrist_img, wrist_axis_tensor], dim=1)
                         except:
                             pass
                     else:
@@ -538,39 +540,39 @@ class SmolVLAPolicy(PreTrainedPolicy):
                             motion_dynamics_basis=motion_dynamics_basis,
                             cam_to_world=extrinsic_matrix,                  # cam_pose = cam_to_world (고정)
                             intrinsic_matrix=intrinsic_matrix,
-                            robot_eef_abs_poses=robot_state[:, :7],  # eef pose (B, 7)
+                            robot_eef_abs_poses=robot_state[:, -7:],  # eef pose (B, 7)
                             origin_robot=True,
                             origin_fallback="pp",
                             arrow_len=60,
                             return_overlay=False,
                         ) # (B, 3, H, W)
                         try:
-                            wrist_img = item['observation.images.camera2']
-                            wrist_intrinsic_matrix = item['observation.cam_info']['wrist_intrinsic_matrix'].to(torch.float32)
-                            wrist_extrinsic_matrix = item['observation.cam_info']['wrist_extrinsic_matrix'].to(torch.float32)
+                            wrist_img = item['observation.wrist_image']
+                            wrist_intrinsic_matrix = item['observation.cam_info']['wrist_intrinsic_matrix'].to(torch.float32).squeeze(0)
+                            wrist_extrinsic_matrix = item['observation.cam_info']['wrist_extrinsic_matrix'].to(torch.float32).squeeze(0)
                             wrist_plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(wrist_extrinsic_matrix)
                             wrist_axis_tensor, wrist_origin_xy = _make_motion_basis_wrist_axis_rgb_tensor_cam_to_world(
                                 rgb_tensor=wrist_img,
                                 cam_to_world=wrist_plucker_extrinsic_matrix,
                                 intrinsic_matrix=wrist_intrinsic_matrix,
-                                robot_eef_abs_poses=robot_state[:, :7],
+                                robot_eef_abs_poses=robot_state[:, -7:],
                                 origin_robot=True,
                                 origin_fallback="pp",
                                 arrow_len=60,
                                 return_overlay=False,
                             )
                             # save_rgb_image(wrist_axis_tensor[0], "tmp_dir/wrist_non_scaled_axis_tensor.png")
-                            item['observation.images.camera2'] = torch.cat([wrist_img, wrist_axis_tensor], dim=1)
+                            item['observation.wrist_image'] = torch.cat([wrist_img, wrist_axis_tensor], dim=1)
                         except:
                             pass
-                item['observation.images.camera1'] = torch.cat([img, axis_tensor], dim=1)
+                item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
                 # save_rgb_image(axis_tensor[0], "tmp_dir/axis_tensor.png")
                 # save_rgb_image(item['observation.image'][0], "tmp_dir/robot_image.png")
 
         except Exception as e:
             print(e)
         return item
-    
+
 def pad_tensor(tensor, max_len, pad_value=0):
     """
     Efficiently pads a tensor along sequence dimension to match max_len.
@@ -635,7 +637,6 @@ class VLAFlowMatching(nn.Module):
             expert_width_multiplier=self.config.expert_width_multiplier,
             device=self.config.device if self.config.device is not None else "auto",
             visual_cue_mode=self.config.visual_cue_mode,
-            code_mode=self.config.code_mode,
         )
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
