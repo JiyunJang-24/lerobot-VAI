@@ -39,6 +39,13 @@ def merge_results(vanilla_json, basis_json, output_csv):
     if vanilla_data is None or basis_data is None:
         return
 
+    datasets = ["spatial", "object", "goal", "long", "10", "90"]
+    dataset_name = "unknown"
+    for ds in datasets:
+        if ds in vanilla_json.lower() or ds in basis_json.lower():
+            dataset_name = ds
+            break
+
     task_ids = sorted(set(vanilla_data.keys()) | set(basis_data.keys()))
 
     # New header format to match LIBERO-long.csv requirements
@@ -59,8 +66,8 @@ def merge_results(vanilla_json, basis_json, output_csv):
 
         diff = b["success_rate"] - v["success_rate"]
 
-        # Row name format: "libero long task <ID>"
-        task_label = f"libero long task {tid}"
+        # Row name format: "libero xxx task <ID>"
+        task_label = f"libero {dataset_name} task {tid}"
 
         print(f"{task_label:<25} | {v['success_rate']:<15.2f} | {b['success_rate']:<20.2f} | {diff:+.2f}")
 
