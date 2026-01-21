@@ -5,7 +5,7 @@ VANILLA_JSON=${1:-"/root/Desktop/workspace/jiyun/lerobot-VAI/outputs/eval/2026-0
 BASIS_JSON=${2:-"/root/Desktop/workspace/jiyun/lerobot-VAI/outputs/eval/2026-01-20/17-01-53_smolvla_spatial_basis_concat_reproduce/eval_info.json"}
 OUTPUT_CSV=${3:-"merged_eval_results.csv"}
 
-SCRIPTS_DIR="/root/Desktop/workspace/jiyun/lerobot-VAI/eval_scripts"
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Streamlining Evaluation Analysis..."
 echo "Vanilla JSON: $VANILLA_JSON"
