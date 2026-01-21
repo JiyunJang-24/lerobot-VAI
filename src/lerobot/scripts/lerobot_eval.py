@@ -157,6 +157,8 @@ def rollout(
         disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
         leave=False,
     )
+    env.envs[0]._init_state_id += 1
+    print("initial state: ", env.envs[0]._init_state_id)
     check_env_attributes_and_types(env)
     while not np.all(done) and step < max_steps:
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
