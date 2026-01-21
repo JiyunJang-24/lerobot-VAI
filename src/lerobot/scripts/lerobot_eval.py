@@ -147,7 +147,6 @@ def rollout(
     all_rewards = []
     all_successes = []
     all_dones = []
-
     step = 0
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
