@@ -37,5 +37,6 @@ def analyze_success_rate(json_path):
     print(f"{'OVERALL':<33} | {overall_rate:<20.2f} | {total_successes}/{total_episodes}")
 
 if __name__ == "__main__":
-    json_file = "/root/Desktop/workspace/jiyun/lerobot-VAI/outputs/eval/2026-01-20/17-01-52_smolvla_spatial_vanilla_reproduce/eval_info.json"
+    json_file = "/root/Desktop/workspace/jiyun/lerobot-VAI/outputs/eval/2026-01-20/21-28-27_smolvla_goal_basis_concat_reproduce/eval_info.json"
+    print(json_file)
     analyze_success_rate(json_file)
