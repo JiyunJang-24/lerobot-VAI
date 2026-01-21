@@ -180,3 +180,5 @@ outputs/
 
 # Dataset folders
 dataset_git/
+
+*.csv
