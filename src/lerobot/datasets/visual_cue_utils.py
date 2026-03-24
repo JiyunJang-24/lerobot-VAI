@@ -763,7 +763,8 @@ def _make_motion_basis_wrist_axis_rgb_tensor_cam_to_world(
 
             img_bgr = cv2.cvtColor(base_rgb, cv2.COLOR_RGB2BGR)
 
-            colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # BGR: x=red y=green z=blue
+            # colors: list[tuple[int, int, int]] = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # BGR: x=red y=green z=blue
+            colors: list[tuple[int, int, int]] = [(0, 0, 255), (0, 255, 0), (255, 0, 0)]
             origin_xy = (ox, oy)
             cv2.circle(img_bgr, origin_xy, 3, (255, 255, 255), -1)
             basis_np = None
@@ -773,7 +774,8 @@ def _make_motion_basis_wrist_axis_rgb_tensor_cam_to_world(
                 print("Warning: cannot compute local projection basis, using global basis")
             for i in range(3):
                 du = float(basis_np[i, 0])
-                dv = -float(basis_np[i, 1])  # image v-axis flip
+                # dv = -float(basis_np[i, 1])  # image v-axis flip
+                dv = float(basis_np[i, 1])  # v positive UP (so draw uses dv=-basis[:,1])
 
                 end_xy = (int(round(ox + arrow_len * du)),
                         int(round(oy + arrow_len * dv)))
@@ -806,3 +808,320 @@ def _make_motion_basis_wrist_axis_rgb_tensor_cam_to_world(
         else:
             return axis_tensor[0], origins[0]
 
+import torch
+import torch.nn as nn
+from torch import Tensor
+from typing import Optional, Tuple, Union
+from einops import rearrange
+from torch.nn.modules.utils import _pair as to_2tuple
+
+# Sanity checked on Apr20 via visualizing spheres
+
+class PluckerEmbedder(nn.Module):
+    """
+    Convert rays to plucker embedding
+    """
+
+    def __init__(
+        self,
+        img_size: Optional[int] = 224,
+        patch_size: int = 1,
+        device: Optional[torch.device] = 'cpu'
+    ):
+        img_size = (256,256) ## REMOVE
+
+        super().__init__()
+        self.device = device
+        self.patch_size = to_2tuple(patch_size)
+        self.img_size = to_2tuple(img_size)
+        self.grid_size = tuple([s // p for s, p in zip(self.img_size, self.patch_size)])
+
+        x, y = torch.meshgrid(
+            torch.arange(self.grid_size[1]),
+            torch.arange(self.grid_size[0]),
+            indexing="xy",
+        )
+
+        x = x.to(self.device)
+        y = y.to(self.device)
+
+        x = x.float().reshape(1, -1) + 0.5
+        y = y.float().reshape(1, -1) + 0.5
+        self.register_buffer("x", x)
+        self.register_buffer("y", y)
+
+    def forward(
+        self,
+        intrinsics: Tensor,
+        camtoworlds: Tensor,
+        image_size: Optional[Union[int, Tuple[int, int]]] = None,
+        patch_size: Optional[Union[int, Tuple[int, int]]] = None,
+    ) -> Tensor:
+        assert intrinsics.shape[-2:] == (3, 3), "intrinsics should be (B, 3, 3)"
+        assert camtoworlds.shape[-2:] == (4, 4), "camtoworlds should be (B, 4, 4)"
+        intrinsics_shape = intrinsics.shape
+        intrinsics = intrinsics.reshape(-1, 3, 3)
+        camtoworlds = camtoworlds.reshape(-1, 4, 4)
+        if image_size is not None:
+            image_size = to_2tuple(image_size)
+        else:
+            image_size = self.img_size
+        if patch_size is not None:
+            patch_size = to_2tuple(patch_size)
+        else:
+            patch_size = self.patch_size
+
+        grid_size = tuple([s // p for s, p in zip(image_size, patch_size)])
+
+        x, y = self.x, self.y
+
+        x = x.repeat(intrinsics.size(0), 1)
+        y = y.repeat(intrinsics.size(0), 1)
+        camera_dirs = torch.nn.functional.pad(
+            torch.stack(
+                [
+                    (x - intrinsics[:, 0, 2][..., None] + 0.5) / intrinsics[:, 0, 0][..., None], # hack, robosuite convention
+                    - (y - intrinsics[:, 1, 2][..., None] + 0.5) / intrinsics[:, 1, 1][..., None],
+                ],
+                dim=-1,
+            ),
+            (0, 1),
+            value=-1.0, # hack, robosuite convention
+        )
+
+        directions = torch.sum(camera_dirs[:, :, None, :] * camtoworlds[:, None, :3, :3], dim=-1)
+        origins = torch.broadcast_to(camtoworlds[:, :3, -1].unsqueeze(1), directions.shape)
+        direction_norm = torch.linalg.norm(directions, dim=-1, keepdims=True)
+        viewdirs = directions / (direction_norm + 1e-8)
+        cross_prod = torch.cross(origins, viewdirs, dim=-1)
+        plucker = torch.cat((cross_prod, viewdirs), dim=-1)
+        origins = rearrange(origins, "b (h w) c -> b h w c", h=grid_size[0])
+        viewdirs = rearrange(viewdirs, "b (h w) c -> b h w c", h=grid_size[0])
+        directions = rearrange(directions, "b (h w) c -> b h w c", h=grid_size[0])
+        plucker = rearrange(plucker, "b (h w) c -> b h w c", h=grid_size[0])
+
+        return {
+            "origins": origins.view(*intrinsics_shape[:-2], *grid_size, 3),
+            "viewdirs": viewdirs.view(*intrinsics_shape[:-2], *grid_size, 3),
+            "dirs": directions.view(*intrinsics_shape[:-2], *grid_size, 3),
+            "plucker": plucker.view(*intrinsics_shape[:-2], *grid_size, 6),
+        }
+
+import cv2
+import numpy as np
+import torch
+
+
+def _make_trace_trajectory_rgb_tensor_cam_to_world(
+    rgb_tensor: torch.Tensor,                         # (3,H,W) or (B,3,H,W), in [0,1]
+    past_states: torch.Tensor,                        # (T,D) or (B,T,D), past -> current
+    intrinsic_matrix: np.ndarray | torch.Tensor,     # (3,3)
+    cam_to_world: np.ndarray | torch.Tensor,         # (4,4)
+    state_pose_slice: slice = slice(-7, -4),         # xyz in state; default assumes last 7 = [x,y,z,qx,qy,qz,qw]
+    return_overlay: bool = False,                    # False: black canvas cue only / True: overlay on current rgb
+    overlay_alpha: float = 0.85,
+    line_thickness: int = 2,
+    point_radius: int = 2,
+    arrow_thickness: int = 3,
+    arrow_tip_length: float = 0.25,
+    draw_points: bool = True,
+    draw_final_arrow: bool = True,
+    clip_outside: bool = True,
+):
+    """
+    Returns:
+      - unbatched input: (3,H,W), list[(u,v)|None]
+      - batched input:   (B,3,H,W), list[list[(u,v)|None]]
+
+    Assumptions:
+      - past_states is ordered from past -> current
+      - state_pose_slice extracts xyz world position from each state
+      - cam_to_world is camera pose in world frame
+    """
+
+    def to_numpy(x):
+        if x is None:
+            return None
+        if isinstance(x, torch.Tensor):
+            return x.detach().cpu().numpy()
+        return np.asarray(x)
+
+    def normalize_rgb(rgb):
+        if rgb.ndim == 3:
+            return rgb.unsqueeze(0), False
+        elif rgb.ndim == 4:
+            return rgb, True
+        else:
+            raise ValueError(f"rgb_tensor must be (3,H,W) or (B,3,H,W), got {tuple(rgb.shape)}")
+
+    def normalize_states(states, B):
+        if states.ndim == 2:
+            # (T,D) -> (1,T,D) -> broadcast if needed
+            states = states.unsqueeze(0)
+        elif states.ndim != 3:
+            raise ValueError(f"past_states must be (T,D) or (B,T,D), got {tuple(states.shape)}")
+
+        if states.shape[0] == 1 and B > 1:
+            states = states.expand(B, -1, -1)
+        elif states.shape[0] != B:
+            raise ValueError(f"past_states batch mismatch: got {states.shape[0]}, expected {B}")
+        return states
+
+    def project_points(K_np, c2w_np, xyz_seq):
+        uv_list = []
+        for p_world in xyz_seq:
+            uv = project_world_point_to_pixel_cam_to_world(K_np, c2w_np, p_world)
+            if uv is None:
+                uv_list.append(None)
+                continue
+            u, v = uv
+            uv_list.append((float(u), float(v)))
+        return uv_list
+
+    def inside_image(pt, W, H):
+        if pt is None:
+            return False
+        u, v = pt
+        return (0 <= u < W) and (0 <= v < H)
+
+    rgb_b, input_batched = normalize_rgb(rgb_tensor)
+    B, C, H, W = rgb_b.shape
+    if C < 3:
+        raise ValueError(f"rgb_tensor must have at least 3 channels, got C={C}")
+
+    past_states = normalize_states(past_states, B)
+
+    K_np = to_numpy(intrinsic_matrix)
+    c2w_np = to_numpy(cam_to_world)
+    if K_np.shape != (3, 3):
+        raise ValueError(f"intrinsic_matrix must be (3,3), got {K_np.shape}")
+    if c2w_np.shape != (4, 4):
+        raise ValueError(f"cam_to_world must be (4,4), got {c2w_np.shape}")
+
+    out_list = []
+    uv_all = []
+
+    for b in range(B):
+        rgb_i = rgb_b[b]  # (C,H,W)
+
+        if return_overlay:
+            base_rgb = (rgb_i[:3].detach().clamp(0, 1).permute(1, 2, 0).cpu().numpy() * 255.0).astype(np.uint8)
+        else:
+            base_rgb = np.zeros((H, W, 3), dtype=np.uint8)
+
+        img_bgr = cv2.cvtColor(base_rgb, cv2.COLOR_RGB2BGR)
+
+        xyz_seq = to_numpy(past_states[b, :, state_pose_slice])   # (T,3)
+        if xyz_seq.ndim != 2 or xyz_seq.shape[1] != 3:
+            raise ValueError(
+                f"state_pose_slice must extract xyz positions. Got shape {xyz_seq.shape} from past_states[{b}]"
+            )
+
+        uv_list = project_points(K_np, c2w_np, xyz_seq)
+        uv_all.append(uv_list)
+
+        # valid projected points
+        draw_pts = []
+        for pt in uv_list:
+            if pt is None:
+                draw_pts.append(None)
+                continue
+
+            u, v = pt
+            if clip_outside:
+                u = max(0.0, min(W - 1.0, u))
+                v = max(0.0, min(H - 1.0, v))
+                draw_pts.append((int(round(u)), int(round(v))))
+            else:
+                if inside_image(pt, W, H):
+                    draw_pts.append((int(round(u)), int(round(v))))
+                else:
+                    draw_pts.append(None)
+
+        # color gradient: old -> recent
+        # BGR
+        # trajectory line (all red)
+        for i in range(len(draw_pts) - 1):
+            p0, p1 = draw_pts[i], draw_pts[i + 1]
+            if p0 is None or p1 is None:
+                continue
+
+            cv2.line(
+                img_bgr,
+                p0,
+                p1,
+                color=(0, 0, 255),   # red (BGR)
+                thickness=line_thickness,
+                lineType=cv2.LINE_AA,
+            )
+
+        if draw_points:
+            for p in draw_pts:
+                if p is None:
+                    continue
+                cv2.circle(
+                    img_bgr,
+                    p,
+                    point_radius,
+                    (0, 0, 255),
+                    -1,
+                    lineType=cv2.LINE_AA,
+                )
+
+        if draw_final_arrow:
+            valid_pts = [p for p in draw_pts if p is not None]
+
+            if len(valid_pts) >= 2:
+
+                # 마지막 점
+                end_pt = np.array(valid_pts[-1], dtype=np.float32)
+
+                # 최근 방향 평균
+                k = min(4, len(valid_pts) - 1)
+
+                direction = np.zeros(2, dtype=np.float32)
+
+                for i in range(1, k + 1):
+                    p_prev = np.array(valid_pts[-1 - i], dtype=np.float32)
+                    p_curr = np.array(valid_pts[-i], dtype=np.float32)
+                    direction += (p_curr - p_prev)
+
+                norm = np.linalg.norm(direction)
+
+                if norm > 1e-6:
+
+                    direction = direction / norm
+
+                    arrow_len = 15.0
+
+                    start = end_pt - direction * arrow_len * 0.6
+                    tip = end_pt + direction * arrow_len * 0.4
+
+                    start = tuple(np.round(start).astype(int))
+                    tip = tuple(np.round(tip).astype(int))
+
+                    cv2.arrowedLine(
+                        img_bgr,
+                        start,
+                        tip,
+                        color=(0, 0, 255),   # red
+                        thickness=arrow_thickness,
+                        tipLength=0.35,
+                        line_type=cv2.LINE_AA,
+                    )
+
+        out_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+        if return_overlay:
+            rgb_u8 = (rgb_i[:3].detach().clamp(0, 1).permute(1, 2, 0).cpu().numpy() * 255.0).astype(np.uint8)
+            out_rgb = (overlay_alpha * out_rgb + (1.0 - overlay_alpha) * rgb_u8).astype(np.uint8)
+
+        out_tensor = torch.from_numpy(out_rgb).float().permute(2, 0, 1) / 255.0
+        out_tensor = out_tensor.to(device=rgb_tensor.device, dtype=rgb_tensor.dtype)
+        out_list.append(out_tensor)
+
+    out = torch.stack(out_list, dim=0)
+    if input_batched:
+        return out, uv_all
+    else:
+        return out[0], uv_all[0]

@@ -4,11 +4,15 @@
 # Note: You may need to log in to Weights & Biases (wandb) if enabled.
 #   --dataset.repo_id=[xyg_20_10_15.0_65.0/v-0.400-0.400_num1,xyg_20_10_15.0_65.0/v-0.600-0.600_num5] \
   # --dataset.repo_id=[xyg_10_10_0.0_0.0/v-1.000-1.000_num1,xyg_10_10_0.0_0.0/v-1.000-1.000_num5,xyg_10_10_45.0_45.0/v-1.000-1.000_num1,xyg_10_10_45.0_45.0/v-1.000-1.000_num5,xyg_10_10_90.0_90.0/v-1.000-1.000_num1,xyg_10_10_90.0_90.0/v-1.000-1.000_num5,xyg_10_10_135.0_135.0/v-1.000-1.000_num1,xyg_10_10_135.0_135.0/v-1.000-1.000_num5,xyg_10_10_225.0_225.0/v-1.000-1.000_num1,xyg_10_10_225.0_225.0/v-1.000-1.000_num5,xyg_10_10_270.0_270.0/v-1.000-1.000_num1,xyg_10_10_270.0_270.0/v-1.000-1.000_num5,xyg_10_10_315.0_315.0/v-1.000-1.000_num1,xyg_10_10_315.0_315.0/v-1.000-1.000_num5] \
-
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
+REPO_ROOT="${SCRIPT_DIR}/.."
+export PYTHONPATH="${REPO_ROOT}/LIBERO:${PYTHONPATH}"
 
 CUDA_VISIBLE_DEVICES=2 python src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=[v-1.000-1.000_num1,v-1.000-1.000_num2,v-1.000-1.000_num3,v-1.000-1.000_num4,v-1.000-1.000_num5,v-1.000-1.000_num6,v-1.000-1.000_num7,v-1.000-1.000_num8,v-1.000-1.000_num9,v-1.000-1.000_num10] \
   --dataset.root="/home/kwonmc/jiyun/lerobot-VAI/dataset_git/libero_goal_reproduce" \
+  --dataset.use_wrist_cam=true \
+  --dataset.use_state=true \
   --policy.type="smolvla" \
   --policy.push_to_hub=false \
   --steps=100000 \
@@ -18,33 +22,34 @@ CUDA_VISIBLE_DEVICES=2 python src/lerobot/scripts/lerobot_train.py \
   --wandb.project="libero_smolvla" \
   --wandb.disable_artifact=true \
   --wandb.entity="DynamicVLA" \
-  --num_workers=0 \
-  --job_name="smolvla_vanilla_goal" \
-  --policy.visual_cue_mode="vanilla" \
+  --num_workers=16 \
+  --job_name="smolvla_goal_trace_concat" \
+  --policy.visual_cue_mode="trace" \
   --policy.load_vlm_weights=true \
   --policy.freeze_vision_encoder=false \
   --policy.train_expert_only=false
+
 # Training checkpoints will be saved under: lerobot/outputs/train/202x-xx-xx/xx-xx-xx_diffusion
 # --wandb.project=smolVLA_wrist_libero_goal \
 
 
-CUDA_VISIBLE_DEVICES=2 python src/lerobot/scripts/lerobot_train.py \
-  --dataset.repo_id=[v-1.000-1.000_num1,v-1.000-1.000_num2,v-1.000-1.000_num3,v-1.000-1.000_num4,v-1.000-1.000_num5,v-1.000-1.000_num6,v-1.000-1.000_num7,v-1.000-1.000_num8,v-1.000-1.000_num9,v-1.000-1.000_num10] \
-  --dataset.root="/home/kwonmc/jiyun/lerobot-VAI/dataset_git/libero_10_reproduce" \
-  --policy.type="smolvla" \
-  --policy.push_to_hub=false \
-  --steps=100000 \
-  --save_freq=5000 \
-  --batch_size=64 \
-  --wandb.enable=true \
-  --wandb.project="libero_smolvla" \
-  --wandb.disable_artifact=true \
-  --wandb.entity="DynamicVLA" \
-  --num_workers=0 \
-  --job_name="smolvla_vanilla_10" \
-  --policy.visual_cue_mode="vanilla" \
-  --policy.load_vlm_weights=true \
-  --policy.freeze_vision_encoder=false \
-  --policy.train_expert_only=false
-# Training checkpoints will be saved under: lerobot/outputs/train/202x-xx-xx/xx-xx-xx_diffusion
-# --wandb.project=smolVLA_wrist_libero_goal \
+# CUDA_VISIBLE_DEVICES=2 python src/lerobot/scripts/lerobot_train.py \
+#   --dataset.repo_id=[v-1.000-1.000_num1,v-1.000-1.000_num2,v-1.000-1.000_num3,v-1.000-1.000_num4,v-1.000-1.000_num5,v-1.000-1.000_num6,v-1.000-1.000_num7,v-1.000-1.000_num8,v-1.000-1.000_num9,v-1.000-1.000_num10] \
+#   --dataset.root="/home/kwonmc/jiyun/lerobot-VAI/dataset_git/libero_10_reproduce" \
+#   --policy.type="smolvla" \
+#   --policy.push_to_hub=false \
+#   --steps=100000 \
+#   --save_freq=5000 \
+#   --batch_size=64 \
+#   --wandb.enable=true \
+#   --wandb.project="libero_smolvla" \
+#   --wandb.disable_artifact=true \
+#   --wandb.entity="DynamicVLA" \
+#   --num_workers=16 \
+#   --job_name="smolvla_vanilla_10" \
+#   --policy.visual_cue_mode="vanilla" \
+#   --policy.load_vlm_weights=true \
+#   --policy.freeze_vision_encoder=false \
+#   --policy.train_expert_only=false
+# # Training checkpoints will be saved under: lerobot/outputs/train/202x-xx-xx/xx-xx-xx_diffusion
+# # --wandb.project=smolVLA_wrist_libero_goal \

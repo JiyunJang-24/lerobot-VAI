@@ -1,13 +1,13 @@
 === Trainable / Frozen Parameter Report ===
-Total params: 450,046,176
-Trainable params: 402,737,376 (89.49%)
+Total params: 450,636,000
+Trainable params: 403,327,200 (89.50%)
 Frozen params: 47,308,800
 
 === Top-level module summary ===
-- model | trainable 402,737,376 (89.49%) | frozen 47,308,800 | (param cnt: tr 499, fr 1)
+- model | trainable 403,327,200 (89.50%) | frozen 47,308,800 | (param cnt: tr 499, fr 1)
 
 === Trainable parameters (count=499) ===
-model.vlm_with_expert.vlm.model.vision_model.embeddings.patch_embedding.weight	shape=(768, 3, 16, 16)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.embeddings.patch_embedding.weight	shape=(768, 6, 16, 16)	numel=1,179,648	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
 model.vlm_with_expert.vlm.model.vision_model.embeddings.patch_embedding.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
 model.vlm_with_expert.vlm.model.vision_model.embeddings.position_embedding.weight	shape=(1024, 768)	numel=786,432	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
 model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0

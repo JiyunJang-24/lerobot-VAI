@@ -21,6 +21,7 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+import einops
 
 import datasets
 import numpy as np
@@ -83,6 +84,8 @@ from lerobot.datasets.visual_cue_utils import (
     _make_motion_basis_axis_rgb_tensor_cam_to_world,
     _make_motion_basis_wrist_axis_rgb_tensor_cam_to_world,
     save_rgb_image,
+    PluckerEmbedder,
+    _make_trace_trajectory_rgb_tensor_cam_to_world,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.configs.train_utils import VISUAL_CUE_MODES
@@ -1048,6 +1051,32 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._ensure_hf_dataset_loaded()
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
+        past_states = []
+        # 현재 포함해서 과거 10개 => 총 11개
+        earliest_valid_idx = idx
+        reached_boundary = False
+
+        for i in range(10, -1, -1):   # 과거 -> 현재 순서
+            if not reached_boundary:
+                candidate_idx = idx - i
+
+                if candidate_idx < 0:
+                    reached_boundary = True
+                else:
+                    candidate_ep_idx = self.hf_dataset[candidate_idx]["episode_index"].item()
+                    if candidate_ep_idx == ep_idx:
+                        earliest_valid_idx = candidate_idx
+                    else:
+                        reached_boundary = True
+
+            # boundary에 걸렸으면 earliest_valid_idx를 반복 사용
+            use_idx = earliest_valid_idx if reached_boundary else candidate_idx
+
+            state = torch.as_tensor(self.hf_dataset[use_idx]["observation.state"])
+            past_states.append(state)
+
+        item["past_states"] = torch.stack(past_states, dim=0)
+
 
         query_indices = None
         if self.delta_indices is not None:
@@ -1627,7 +1656,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         tolerances_s: dict | None = None,
         download_videos: bool = True,
         video_backend: str | None = None,
-        visual_cue_mode: VISUAL_CUE_MODES = "vanilla"
+        visual_cue_mode: VISUAL_CUE_MODES = "vanilla",
+        use_wrist_cam: bool = True,
+        use_state: bool = True
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -1648,7 +1679,10 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             )
             for repo_id in repo_ids
         ]
-
+        self.use_wrist_cam = use_wrist_cam
+        print("use wrist cam: ", self.use_wrist_cam)
+        self.use_state: bool = use_state
+        print("use state: ", self.use_state)
         # Disable any data keys that are not common across all of the datasets. Note: we may relax this
         # restriction in future iterations of this class. For now, this is necessary at least for being able
         # to use PyTorch's default DataLoader collate function.
@@ -1679,6 +1713,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             dataset.meta.stats.pop('observation.environment_state')
         self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
         self.visual_cue_mode = visual_cue_mode
+        if self.visual_cue_mode == "plucker_concat":
+            self.image_size = 256
+            self.plucker_embedder = PluckerEmbedder(img_size=self.image_size, device='cpu')
 
 
     @property
@@ -1776,6 +1813,11 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         item = self._datasets[dataset_idx][idx - start_idx]
         item = self._get_visual_cues(item)
         item["dataset_index"] = torch.tensor(dataset_idx)
+        if self.use_wrist_cam == False:
+            item.pop('observation.wrist_image')
+            item.pop('observation.wrist_image_is_pad')
+        if self.use_state == False:
+            item['observation.state'].zero_()
         item = self._pad_item_inplace(item)
         for data_key in self.disabled_features:
             if data_key in item:
@@ -1966,7 +2008,60 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
                 # save_rgb_image(axis_tensor[0], "tmp_dir/axis_tensor.png")
                 # save_rgb_image(item['observation.image'][0], "tmp_dir/robot_image.png")
+            elif self.visual_cue_mode == "plucker_concat":
+                with torch.no_grad():
+                    intrinsic_tensor = intrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)
+                    extrinsic_tensor = extrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)
+                    plucker_data = self.plucker_embedder(intrinsic_tensor, extrinsic_tensor)
+                    plucker_tensor = einops.rearrange(plucker_data['plucker'], 's h w c -> s c h w')
+                    item['observation.image'] = torch.cat([img, plucker_tensor], dim=1)
 
+            elif self.visual_cue_mode == "trace":
+                with torch.no_grad():
+                    past_states = item["past_states"]   # (T,D) or (B,T,D), past -> current
+                    trace_tensor, trace_uv = _make_trace_trajectory_rgb_tensor_cam_to_world(
+                        rgb_tensor=img,
+                        past_states=past_states,
+                        intrinsic_matrix=intrinsic_matrix,
+                        cam_to_world=extrinsic_matrix,
+                        state_pose_slice=slice(-7, -4),   # xyz from last 7 dims
+                        return_overlay=True,             # cue only
+                        overlay_alpha=0.85,
+                        line_thickness=2,
+                        point_radius=2,
+                        arrow_thickness=3,
+                        arrow_tip_length=0.25,
+                        draw_points=True,
+                        draw_final_arrow=True,
+                        clip_outside=True,
+                    )
+                    save_rgb_image(trace_tensor, "tmp_dir/trace_image.png")
+                    item["observation.image"] = torch.cat([img, trace_tensor], dim=1)
+                    try:
+                        wrist_img = item['observation.wrist_image']
+                        wrist_intrinsic_matrix = item['wrist_intrinsic_matrix']
+                        wrist_extrinsic_matrix = item['wrist_extrinsic_matrix']
+                        wrist_plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(wrist_extrinsic_matrix)
+                        trace_tensor, trace_uv = _make_trace_trajectory_rgb_tensor_cam_to_world(
+                            rgb_tensor=wrist_img,
+                            past_states=past_states,
+                            intrinsic_matrix=wrist_intrinsic_matrix,
+                            cam_to_world=wrist_plucker_extrinsic_matrix,
+                            state_pose_slice=slice(-7, -4),   # xyz from last 7 dims
+                            return_overlay=True,             # cue only
+                            overlay_alpha=0.85,
+                            line_thickness=1,
+                            point_radius=2,
+                            arrow_thickness=1,
+                            arrow_tip_length=0.25,
+                            draw_points=True,
+                            draw_final_arrow=True,
+                            clip_outside=True,
+                        )
+                        save_rgb_image(trace_tensor, "tmp_dir/wrist_trace_image.png")
+                        item['observation.wrist_image'] = torch.cat([wrist_img, trace_tensor], dim=1)
+                    except:
+                        pass
         except Exception as e:
             print(e)
         return item
