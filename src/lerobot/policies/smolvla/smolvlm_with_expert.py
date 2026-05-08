@@ -626,6 +626,8 @@ class SmolVLMWithExpertModel(nn.Module):
             self.vision_fusion_proj = self.vision_fusion_proj.to(dtype=vf_dtype)
             self.new_visual_cue_encoder = True
             print("Initialized visual cue encoder for {} input!.".format(self.visual_cue_mode))
+        else:
+            print("Initialized visual cue encoder for {} input!.".format(self.visual_cue_mode))
         # else:
         #     print("EVAL mode")
         #     if self.visual_cue_mode == "basis_rescale_concat" or self.visual_cue_mode == "basis_concat" or self.visual_cue_mode == "plucker_concat":

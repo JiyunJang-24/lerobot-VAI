@@ -16,6 +16,7 @@
 import dataclasses
 import logging
 import time
+import copy
 from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
@@ -420,7 +421,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info("Creating policy")
 
     if isinstance(dataset, MultiLeRobotDataset):
-        ds_meta = dataset._datasets[0].meta
+        ds_meta = copy.copy(dataset._datasets[0].meta)
+        ds_meta.episodes = dataset.meta_episodes
         try:
             ds_meta.stats = dataset.stats['panda']
             print("Not implementing using cross embodiment normalize yet. We use only panda stats")

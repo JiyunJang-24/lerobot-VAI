@@ -9,10 +9,11 @@
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 REPO_ROOT="${SCRIPT_DIR}/.."
 export PYTHONPATH="${REPO_ROOT}/LIBERO:${PYTHONPATH}"
-
+export PYTHONPATH="${REPO_ROOT}/third_party/AimBot/src/crosshair:${PYTHONPATH}"
+export PYTHONPATH="${REPO_ROOT}/third_party/Depth_Anything_V2:${PYTHONPATH}"
 CUDA_VISIBLE_DEVICES=3 python src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=[v-1.000-1.000_num1,v-1.000-1.000_num2,v-1.000-1.000_num3,v-1.000-1.000_num4,v-1.000-1.000_num5,v-1.000-1.000_num6,v-1.000-1.000_num7,v-1.000-1.000_num8,v-1.000-1.000_num9,v-1.000-1.000_num10] \
-  --dataset.root="/home/kwonmc/jiyun/lerobot-VAI/dataset_git/libero_10_reproduce" \
+  --dataset.root="/home/kwonmc/jiyun/lerobot-VAI/dataset_git/libero_goal_reproduce" \
   --dataset.use_wrist_cam=true \
   --dataset.use_state=true \
   --policy.type="smolvla" \
@@ -25,8 +26,8 @@ CUDA_VISIBLE_DEVICES=3 python src/lerobot/scripts/lerobot_train.py \
   --wandb.disable_artifact=true \
   --wandb.entity="DynamicVLA" \
   --num_workers=16 \
-  --job_name="smolvla_10_basis_concat_wrist_fixed" \
-  --policy.visual_cue_mode="basis_concat" \
+  --job_name="smolvla_goal_aimbot_fixed" \
+  --policy.visual_cue_mode="aimbot" \
   --policy.load_vlm_weights=true \
   --policy.freeze_vision_encoder=false \
   --policy.train_expert_only=false

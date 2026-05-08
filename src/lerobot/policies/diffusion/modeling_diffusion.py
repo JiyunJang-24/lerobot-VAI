@@ -167,20 +167,27 @@ class DiffusionModel(nn.Module):
         self.config = config
 
         # Build observation encoders (depending on which observations are provided).
-        global_cond_dim = self.config.robot_state_feature.shape[0]
+        state_cond_dim = self.config.robot_state_feature.shape[0] * config.n_obs_steps
+        image_cond_dim = 0
+        env_cond_dim = 0
         if self.config.image_features:
             num_images = len(self.config.image_features)
             if self.config.use_separate_rgb_encoder_per_camera:
                 encoders = [DiffusionRgbEncoder(config) for _ in range(num_images)]
                 self.rgb_encoder = nn.ModuleList(encoders)
-                global_cond_dim += encoders[0].feature_dim * num_images
+                image_feature_dim = encoders[0].feature_dim
             else:
                 self.rgb_encoder = DiffusionRgbEncoder(config)
-                global_cond_dim += self.rgb_encoder.feature_dim * num_images
+                image_feature_dim = self.rgb_encoder.feature_dim
+            image_cond_steps = config.n_obs_steps + int(config.image_goal_cond)
+            image_cond_dim = image_feature_dim * num_images * image_cond_steps
         if self.config.env_state_feature:
-            global_cond_dim += self.config.env_state_feature.shape[0]
+            env_cond_dim = self.config.env_state_feature.shape[0] * config.n_obs_steps
 
-        self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
+        self.unet = DiffusionConditionalUnet1d(
+            config,
+            global_cond_dim=state_cond_dim + image_cond_dim + env_cond_dim,
+        )
 
         self.noise_scheduler = _make_noise_scheduler(
             config.noise_scheduler_type,
@@ -238,9 +245,19 @@ class DiffusionModel(nn.Module):
     def _prepare_global_conditioning(self, batch: dict[str, Tensor]) -> Tensor:
         """Encode image features and concatenate them all together along with the state vector."""
         batch_size, n_obs_steps = batch[OBS_STATE].shape[:2]
-        global_cond_feats = [batch[OBS_STATE]]
+        global_cond_feats = [batch[OBS_STATE].flatten(start_dim=1)]
         # Extract image features.
         if self.config.image_features:
+            image_obs_steps = batch[OBS_IMAGES].shape[1]
+            expected_image_obs_steps = n_obs_steps + int(self.config.image_goal_cond)
+            if image_obs_steps == n_obs_steps and self.config.image_goal_cond:
+                batch = dict(batch)
+                batch[OBS_IMAGES] = torch.cat([batch[OBS_IMAGES], batch[OBS_IMAGES][:, -1:]], dim=1)
+                image_obs_steps = expected_image_obs_steps
+            if image_obs_steps != expected_image_obs_steps:
+                raise ValueError(
+                    f"Expected {expected_image_obs_steps} image observation steps, got {image_obs_steps}."
+                )
             if self.config.use_separate_rgb_encoder_per_camera:
                 # Combine batch and sequence dims while rearranging to make the camera index dimension first.
                 images_per_camera = einops.rearrange(batch[OBS_IMAGES], "b s n ... -> n (b s) ...")
@@ -253,7 +270,7 @@ class DiffusionModel(nn.Module):
                 # Separate batch and sequence dims back out. The camera index dim gets absorbed into the
                 # feature dim (effectively concatenating the camera features).
                 img_features = einops.rearrange(
-                    img_features_list, "(n b s) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
+                    img_features_list, "(n b s) ... -> b s (n ...)", b=batch_size, s=image_obs_steps
                 )
             else:
                 # Combine batch, sequence, and "which camera" dims before passing to shared encoder.
@@ -263,15 +280,15 @@ class DiffusionModel(nn.Module):
                 # Separate batch dim and sequence dim back out. The camera index dim gets absorbed into the
                 # feature dim (effectively concatenating the camera features).
                 img_features = einops.rearrange(
-                    img_features, "(b s n) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
+                    img_features, "(b s n) ... -> b s (n ...)", b=batch_size, s=image_obs_steps
                 )
-            global_cond_feats.append(img_features)
+            global_cond_feats.append(img_features.flatten(start_dim=1))
 
         if self.config.env_state_feature:
-            global_cond_feats.append(batch[OBS_ENV_STATE])
+            global_cond_feats.append(batch[OBS_ENV_STATE].flatten(start_dim=1))
 
-        # Concatenate features then flatten to (B, global_cond_dim).
-        return torch.cat(global_cond_feats, dim=-1).flatten(start_dim=1)
+        # Concatenate features to (B, global_cond_dim).
+        return torch.cat(global_cond_feats, dim=-1)
 
     def generate_actions(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """

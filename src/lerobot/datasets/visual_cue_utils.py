@@ -4,6 +4,9 @@ import cv2
 import numpy as np
 import torch
 
+MAX_EE_TABLE_DIST = 0.4
+FIXCAM_TOLERANCE = 18
+WSTCAM_TOLERANCE = 12
 
 def remove_extrinsic_camera_axis_correction(extrinsic_mtx: torch.Tensor)->torch.Tensor:
 	camera_axis_correction = torch.Tensor(
@@ -148,6 +151,41 @@ def save_rgb_image(rgb_b3hw: torch.Tensor, path: str):
     img_bgr = cv2.cvtColor(img_hwc, cv2.COLOR_RGB2BGR)
     cv2.imwrite(path, img_bgr)
 
+
+def save_depth_image(depth_b1hw: torch.Tensor, path: str):
+    """
+    Save a depth tensor as a normalized grayscale image.
+
+    Args:
+        depth_b1hw: torch.Tensor (B,1,H,W) or (1,H,W) or (H,W)
+        path: output file path
+    """
+
+    x = depth_b1hw.detach().float().cpu()
+
+    # allow multiple shapes
+    if x.ndim == 2:
+        x = x.unsqueeze(0).unsqueeze(0)
+    elif x.ndim == 3:
+        x = x.unsqueeze(0)
+
+    if x.ndim != 4 or x.shape[1] != 1:
+        raise ValueError(f"Expected (B,1,H,W) or (1,H,W) or (H,W), got {tuple(x.shape)}")
+
+    os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+
+    depth = x[0,0]  # (H,W)
+
+    depth_np = depth.numpy()
+
+    # normalize for visualization
+    d_min = depth_np.min()
+    d_max = depth_np.max()
+    depth_norm = (depth_np - d_min) / (d_max - d_min + 1e-8)
+
+    depth_uint8 = (depth_norm * 255).astype(np.uint8)
+
+    cv2.imwrite(path, depth_uint8)
 
 def save_rgb_image(rgb_b3hw: torch.Tensor, path: str):
     """
@@ -1125,3 +1163,130 @@ def _make_trace_trajectory_rgb_tensor_cam_to_world(
         return out, uv_all
     else:
         return out[0], uv_all[0]
+
+
+import cv2
+import json
+import numpy as np
+import os
+import torch
+import torchvision.transforms as transforms
+from third_party.Depth_Anything_V2.depth_anything_v2.dpt import DepthAnythingV2
+
+from PIL import Image
+
+from third_party.AimBot.src.crosshair.reticle_builder import ReticleBuilder
+from third_party.AimBot.src.crosshair.config import CONFIG_DICT
+
+class Depth:
+    """Handle depth estimation using Depth-Anything-V2."""
+    
+    def __init__(self, aimbot: bool = True, encoder: str = "vitb", ckpt_dir: str = "/home/kwonmc/jiyun/lerobot-VAI/third_party/Depth_Anything_V2/checkpoints"):
+        """Initialize Depth-Anything-V2 model.
+        
+        Args:
+            aimbot: Whether to use aimbot functionality
+            encoder: Model encoder type ('vits', 'vitb', 'vitl', 'vitg')
+            ckpt_dir: Directory containing model checkpoints
+        """
+        self.device = 'cuda' if torch.cuda.is_available() else \
+                     'mps' if torch.backends.mps.is_available() else 'cpu'
+        self.device = 'cpu'
+        
+        model_configs = {
+            'vits': {'encoder': 'vits', 'features': 64,  'out_channels': [48, 96, 192, 384]},
+            'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
+            'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
+            'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]},
+        }
+        
+        self.model = DepthAnythingV2(**model_configs[encoder])
+        state_dict_path = f"{ckpt_dir}/depth_anything_v2_{encoder}.pth"
+        state = torch.load(state_dict_path, map_location="cpu")
+        self.model.load_state_dict(state)
+        self.model = self.model.to(self.device).eval()
+        if aimbot:
+            self.reticle_config_key = "large_crosshair_dynamic_default_color"
+            print(f"Using reticle with configuration key: {self.reticle_config_key}")
+            config = CONFIG_DICT[self.reticle_config_key]
+            shooting_line_config = config["shooting_line"]
+            scope_reticle_config = config["scope_reticle"]
+                    
+            if hasattr(scope_reticle_config, "line_length_cfg"):
+                scope_reticle_config.line_length_cfg.maxdist = MAX_EE_TABLE_DIST
+            
+            if hasattr(scope_reticle_config, "circle_radius_cfg"):
+                scope_reticle_config.circle_radius_cfg.maxdist = MAX_EE_TABLE_DIST
+            
+            self.reticle_builder = ReticleBuilder(
+                shooting_line_config=shooting_line_config,
+                scope_reticle_config=scope_reticle_config,
+            )
+        
+    def inference_depth_from_rgb(self, rgb_image: np.ndarray, input_size: int = 518) -> np.ndarray:
+        """Infer depth from RGB image.
+        
+        Args:
+            rgb_image: RGB image as numpy array
+            input_size: Input size for the model
+            
+        Returns:
+            Depth image as 3-channel uint8 numpy array
+        """
+        depth = self.model.infer_image(rgb_image, input_size)
+        depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8) * 255.0
+        depth = depth.astype(np.uint8)
+        depth = np.repeat(depth[..., np.newaxis], 3, axis=-1)
+        return depth
+
+    def get_aimbot_overlay(self, rgb_tensor, depth_tensor, extrinsic_matrix, intrinsic_matrix, gripper_pos, gripper_quat, gripper_open, image_height=256, image_width=256, use_front=True):
+        """
+        Generate an aimbot overlay for robotic manipulation tasks.
+
+        Args:
+            rgb_tensor (torch.Tensor): Input RGB image tensor of shape (3, H, W) in [0, 1].
+            depth_tensor (torch.Tensor): Input depth image tensor of shape (1, H, W) in meters.
+            extrinsic_matrix (torch.Tensor): Camera extrinsic matrix of shape (4, 4).
+            intrinsic_matrix (torch.Tensor): Camera intrinsic matrix of shape (3, 3).
+            gripper_pos (torch.Tensor): Gripper position in world coordinates of shape (3,).
+            gripper_quat (torch.Tensor): Gripper orientation as a quaternion of shape (4,).
+            gripper_open (bool): Whether the gripper is open or closed.
+            image_height (int): Height of the input images.
+            image_width (int): Width of the input images.
+            use_front (bool): Whether to use the front camera view for the overlay.
+        """
+        if use_front:
+            rgb = self.reticle_builder.render_on_fix_camera(
+                camera_rgb=np.ascontiguousarray(rgb_tensor.permute(1, 2, 0).mul(255).clamp(0, 255).cpu().numpy().astype(np.uint8)),
+                camera_depth=depth_tensor,
+                camera_extrinsics=extrinsic_matrix,
+                camera_intrinsics=intrinsic_matrix,
+                gripper_pos=gripper_pos,
+                gripper_quat=gripper_quat,
+                gripper_open=gripper_open,
+                image_height=image_height,
+                image_width=image_width,
+                tolerance=FIXCAM_TOLERANCE,
+            )
+        else:
+            rgb = self.reticle_builder.render_on_wst_camera(
+                wrist_camera_rgb=np.ascontiguousarray(rgb_tensor.permute(1, 2, 0).mul(255).clamp(0, 255).cpu().numpy().astype(np.uint8)),
+                wrist_camera_depth=depth_tensor,
+                wrist_camera_extrinsics=extrinsic_matrix,
+                wrist_camera_intrinsics=intrinsic_matrix,
+                gripper_pos=gripper_pos,
+                gripper_quat=gripper_quat,
+                gripper_open=gripper_open,
+                image_height=image_height,
+                image_width=image_width,
+                tolerance=WSTCAM_TOLERANCE,
+            )
+        rgb = np.ascontiguousarray(rgb)
+        #to tensor
+        return torch.tensor(rgb).permute(2, 0, 1).contiguous().float().div(255.0).unsqueeze(0)
+
+
+def is_open(gripper_qpos):
+    if abs(gripper_qpos[0]) > 0.035 and abs(gripper_qpos[1]) > 0.035:
+        return True
+    return False

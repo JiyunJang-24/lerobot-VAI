@@ -107,6 +107,7 @@ class DiffusionConfig(PreTrainedConfig):
     n_obs_steps: int = 2
     horizon: int = 16
     n_action_steps: int = 8
+    image_goal_cond: bool = False
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -206,6 +207,9 @@ class DiffusionConfig(PreTrainedConfig):
     def validate_features(self) -> None:
         if len(self.image_features) == 0 and self.env_state_feature is None:
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
+
+        if self.image_goal_cond and len(self.image_features) == 0:
+            raise ValueError("`image_goal_cond=True` requires at least one image observation input.")
 
         if self.crop_shape is not None:
             for key, image_ft in self.image_features.items():
