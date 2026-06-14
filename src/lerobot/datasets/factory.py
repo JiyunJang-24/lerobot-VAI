@@ -116,6 +116,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             visual_cue_mode=cfg.policy.visual_cue_mode,
             use_wrist_cam=cfg.dataset.use_wrist_cam,
             use_state=cfg.dataset.use_state,
+            cache_in_memory=cfg.dataset.cache_in_memory,
         )
 
         logging.info(
@@ -137,6 +138,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 revision=cfg.dataset.revision,
                 video_backend=cfg.dataset.video_backend,
                 tolerance_s=cfg.tolerance_s,
+                cache_in_memory=cfg.dataset.cache_in_memory,
+                use_wrist_cam=cfg.dataset.use_wrist_cam,
             )
         else:
             dataset = StreamingLeRobotDataset(

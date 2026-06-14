@@ -51,6 +51,7 @@ from typing import Any
 import jsonlines
 import pandas as pd
 import pyarrow as pa
+import pyarrow.parquet as pq
 import tqdm
 from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
@@ -175,24 +176,19 @@ def convert_tasks(root, new_root):
 
 
 def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
-    # TODO(rcadene): to save RAM use Dataset.from_parquet(file) and concatenate_datasets
-    dataframes = [pd.read_parquet(file) for file in paths_to_cat]
-    # Concatenate all DataFrames along rows
-    concatenated_df = pd.concat(dataframes, ignore_index=True)
-
     path = new_root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    tables = [pq.read_table(file) for file in paths_to_cat]
+    concatenated_table = pa.concat_tables(tables, promote_options="default")
+
     if len(image_keys) > 0:
-        schema = pa.Schema.from_pandas(concatenated_df)
-        features = Features.from_arrow_schema(schema)
+        features = Features.from_arrow_schema(concatenated_table.schema)
         for key in image_keys:
             features[key] = Image()
-        schema = features.arrow_schema
-    else:
-        schema = None
+        concatenated_table = concatenated_table.cast(features.arrow_schema)
 
-    concatenated_df.to_parquet(path, index=False, schema=schema)
+    pq.write_table(concatenated_table, path)
 
 
 def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):

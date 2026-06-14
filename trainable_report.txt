@@ -1,224 +1,512 @@
 === Trainable / Frozen Parameter Report ===
-Total params: 269,178,151
-Trainable params: 269,178,151 (100.00%)
-Frozen params: 0
+Total params: 451,225,824
+Trainable params: 403,917,024 (89.52%)
+Frozen params: 47,308,800
 
 === Top-level module summary ===
-- diffusion | trainable 269,178,151 (100.00%) | frozen 0 | (param cnt: tr 212, fr 0)
+- model | trainable 403,917,024 (89.52%) | frozen 47,308,800 | (param cnt: tr 499, fr 1)
 
-=== Trainable parameters (count=212) ===
-diffusion.rgb_encoder.backbone.0.weight	shape=(64, 3, 7, 7)	numel=9,408	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.1.weight	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.1.bias	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.0.conv1.weight	shape=(64, 64, 3, 3)	numel=36,864	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.0.bn1.weight	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.0.bn1.bias	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.0.conv2.weight	shape=(64, 64, 3, 3)	numel=36,864	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.0.bn2.weight	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.0.bn2.bias	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.1.conv1.weight	shape=(64, 64, 3, 3)	numel=36,864	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.1.bn1.weight	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.1.bn1.bias	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.1.conv2.weight	shape=(64, 64, 3, 3)	numel=36,864	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.1.bn2.weight	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.4.1.bn2.bias	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.0.conv1.weight	shape=(128, 64, 3, 3)	numel=73,728	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.0.bn1.weight	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.0.bn1.bias	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.0.conv2.weight	shape=(128, 128, 3, 3)	numel=147,456	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.0.bn2.weight	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.0.bn2.bias	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.0.downsample.0.weight	shape=(128, 64, 1, 1)	numel=8,192	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.0.downsample.1.weight	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.0.downsample.1.bias	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.1.conv1.weight	shape=(128, 128, 3, 3)	numel=147,456	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.1.bn1.weight	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.1.bn1.bias	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.1.conv2.weight	shape=(128, 128, 3, 3)	numel=147,456	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.1.bn2.weight	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.5.1.bn2.bias	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.0.conv1.weight	shape=(256, 128, 3, 3)	numel=294,912	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.0.bn1.weight	shape=(256,)	numel=256	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.0.bn1.bias	shape=(256,)	numel=256	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.0.conv2.weight	shape=(256, 256, 3, 3)	numel=589,824	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.0.bn2.weight	shape=(256,)	numel=256	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.0.bn2.bias	shape=(256,)	numel=256	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.0.downsample.0.weight	shape=(256, 128, 1, 1)	numel=32,768	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.0.downsample.1.weight	shape=(256,)	numel=256	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.0.downsample.1.bias	shape=(256,)	numel=256	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.1.conv1.weight	shape=(256, 256, 3, 3)	numel=589,824	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.1.bn1.weight	shape=(256,)	numel=256	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.1.bn1.bias	shape=(256,)	numel=256	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.1.conv2.weight	shape=(256, 256, 3, 3)	numel=589,824	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.1.bn2.weight	shape=(256,)	numel=256	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.6.1.bn2.bias	shape=(256,)	numel=256	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.0.conv1.weight	shape=(512, 256, 3, 3)	numel=1,179,648	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.0.bn1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.0.bn1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.0.conv2.weight	shape=(512, 512, 3, 3)	numel=2,359,296	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.0.bn2.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.0.bn2.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.0.downsample.0.weight	shape=(512, 256, 1, 1)	numel=131,072	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.0.downsample.1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.0.downsample.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.1.conv1.weight	shape=(512, 512, 3, 3)	numel=2,359,296	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.1.bn1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.1.bn1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.1.conv2.weight	shape=(512, 512, 3, 3)	numel=2,359,296	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.1.bn2.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.backbone.7.1.bn2.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.pool.nets.weight	shape=(32, 512, 1, 1)	numel=16,384	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.pool.nets.bias	shape=(32,)	numel=32	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.out.weight	shape=(64, 64)	numel=4,096	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.rgb_encoder.out.bias	shape=(64,)	numel=64	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.diffusion_step_encoder.1.weight	shape=(512, 128)	numel=65,536	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.diffusion_step_encoder.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.diffusion_step_encoder.3.weight	shape=(128, 512)	numel=65,536	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.diffusion_step_encoder.3.bias	shape=(128,)	numel=128	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.conv1.block.0.weight	shape=(512, 7, 5)	numel=17,920	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.conv1.block.0.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.conv1.block.1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.conv1.block.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.cond_encoder.1.weight	shape=(1024, 485)	numel=496,640	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.cond_encoder.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.conv2.block.0.weight	shape=(512, 512, 5)	numel=1,310,720	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.conv2.block.0.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.conv2.block.1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.conv2.block.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.residual_conv.weight	shape=(512, 7, 1)	numel=3,584	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.0.residual_conv.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.1.conv1.block.0.weight	shape=(512, 512, 5)	numel=1,310,720	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.1.conv1.block.0.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.1.conv1.block.1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.1.conv1.block.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.1.cond_encoder.1.weight	shape=(1024, 485)	numel=496,640	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.1.cond_encoder.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.1.conv2.block.0.weight	shape=(512, 512, 5)	numel=1,310,720	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.1.conv2.block.0.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.1.conv2.block.1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.1.conv2.block.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.2.weight	shape=(512, 512, 3)	numel=786,432	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.0.2.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.conv1.block.0.weight	shape=(1024, 512, 5)	numel=2,621,440	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.conv1.block.0.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.conv1.block.1.weight	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.conv1.block.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.cond_encoder.1.weight	shape=(2048, 485)	numel=993,280	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.cond_encoder.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.conv2.block.0.weight	shape=(1024, 1024, 5)	numel=5,242,880	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.conv2.block.0.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.conv2.block.1.weight	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.conv2.block.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.residual_conv.weight	shape=(1024, 512, 1)	numel=524,288	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.0.residual_conv.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.1.conv1.block.0.weight	shape=(1024, 1024, 5)	numel=5,242,880	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.1.conv1.block.0.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.1.conv1.block.1.weight	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.1.conv1.block.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.1.cond_encoder.1.weight	shape=(2048, 485)	numel=993,280	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.1.cond_encoder.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.1.conv2.block.0.weight	shape=(1024, 1024, 5)	numel=5,242,880	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.1.conv2.block.0.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.1.conv2.block.1.weight	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.1.conv2.block.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.2.weight	shape=(1024, 1024, 3)	numel=3,145,728	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.1.2.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.conv1.block.0.weight	shape=(2048, 1024, 5)	numel=10,485,760	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.conv1.block.0.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.conv1.block.1.weight	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.conv1.block.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.cond_encoder.1.weight	shape=(4096, 485)	numel=1,986,560	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.cond_encoder.1.bias	shape=(4096,)	numel=4,096	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.conv2.block.0.weight	shape=(2048, 2048, 5)	numel=20,971,520	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.conv2.block.0.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.conv2.block.1.weight	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.conv2.block.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.residual_conv.weight	shape=(2048, 1024, 1)	numel=2,097,152	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.0.residual_conv.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.1.conv1.block.0.weight	shape=(2048, 2048, 5)	numel=20,971,520	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.1.conv1.block.0.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.1.conv1.block.1.weight	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.1.conv1.block.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.1.cond_encoder.1.weight	shape=(4096, 485)	numel=1,986,560	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.1.cond_encoder.1.bias	shape=(4096,)	numel=4,096	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.1.conv2.block.0.weight	shape=(2048, 2048, 5)	numel=20,971,520	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.1.conv2.block.0.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.1.conv2.block.1.weight	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.down_modules.2.1.conv2.block.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.0.conv1.block.0.weight	shape=(2048, 2048, 5)	numel=20,971,520	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.0.conv1.block.0.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.0.conv1.block.1.weight	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.0.conv1.block.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.0.cond_encoder.1.weight	shape=(4096, 485)	numel=1,986,560	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.0.cond_encoder.1.bias	shape=(4096,)	numel=4,096	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.0.conv2.block.0.weight	shape=(2048, 2048, 5)	numel=20,971,520	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.0.conv2.block.0.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.0.conv2.block.1.weight	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.0.conv2.block.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.1.conv1.block.0.weight	shape=(2048, 2048, 5)	numel=20,971,520	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.1.conv1.block.0.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.1.conv1.block.1.weight	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.1.conv1.block.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.1.cond_encoder.1.weight	shape=(4096, 485)	numel=1,986,560	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.1.cond_encoder.1.bias	shape=(4096,)	numel=4,096	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.1.conv2.block.0.weight	shape=(2048, 2048, 5)	numel=20,971,520	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.1.conv2.block.0.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.1.conv2.block.1.weight	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.mid_modules.1.conv2.block.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.conv1.block.0.weight	shape=(1024, 4096, 5)	numel=20,971,520	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.conv1.block.0.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.conv1.block.1.weight	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.conv1.block.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.cond_encoder.1.weight	shape=(2048, 485)	numel=993,280	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.cond_encoder.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.conv2.block.0.weight	shape=(1024, 1024, 5)	numel=5,242,880	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.conv2.block.0.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.conv2.block.1.weight	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.conv2.block.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.residual_conv.weight	shape=(1024, 4096, 1)	numel=4,194,304	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.0.residual_conv.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.1.conv1.block.0.weight	shape=(1024, 1024, 5)	numel=5,242,880	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.1.conv1.block.0.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.1.conv1.block.1.weight	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.1.conv1.block.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.1.cond_encoder.1.weight	shape=(2048, 485)	numel=993,280	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.1.cond_encoder.1.bias	shape=(2048,)	numel=2,048	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.1.conv2.block.0.weight	shape=(1024, 1024, 5)	numel=5,242,880	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.1.conv2.block.0.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.1.conv2.block.1.weight	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.1.conv2.block.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.2.weight	shape=(1024, 1024, 4)	numel=4,194,304	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.0.2.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.conv1.block.0.weight	shape=(512, 2048, 5)	numel=5,242,880	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.conv1.block.0.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.conv1.block.1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.conv1.block.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.cond_encoder.1.weight	shape=(1024, 485)	numel=496,640	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.cond_encoder.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.conv2.block.0.weight	shape=(512, 512, 5)	numel=1,310,720	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.conv2.block.0.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.conv2.block.1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.conv2.block.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.residual_conv.weight	shape=(512, 2048, 1)	numel=1,048,576	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.0.residual_conv.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.1.conv1.block.0.weight	shape=(512, 512, 5)	numel=1,310,720	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.1.conv1.block.0.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.1.conv1.block.1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.1.conv1.block.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.1.cond_encoder.1.weight	shape=(1024, 485)	numel=496,640	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.1.cond_encoder.1.bias	shape=(1024,)	numel=1,024	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.1.conv2.block.0.weight	shape=(512, 512, 5)	numel=1,310,720	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.1.conv2.block.0.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.1.conv2.block.1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.1.conv2.block.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.2.weight	shape=(512, 512, 4)	numel=1,048,576	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.up_modules.1.2.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.final_conv.0.block.0.weight	shape=(512, 512, 5)	numel=1,310,720	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.final_conv.0.block.0.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.final_conv.0.block.1.weight	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.final_conv.0.block.1.bias	shape=(512,)	numel=512	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.final_conv.1.weight	shape=(7, 512, 1)	numel=3,584	requires_grad=True	dtype=torch.float32	device=cuda:0
-diffusion.unet.final_conv.1.bias	shape=(7,)	numel=7	requires_grad=True	dtype=torch.float32	device=cuda:0
+=== Trainable parameters (count=499) ===
+model.vlm_with_expert.vlm.model.vision_model.embeddings.patch_embedding.weight	shape=(768, 9, 16, 16)	numel=1,769,472	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.embeddings.patch_embedding.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.embeddings.position_embedding.weight	shape=(1024, 768)	numel=786,432	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.0.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.1.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.2.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.3.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.4.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.5.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.6.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.7.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.8.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.9.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.10.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.self_attn.k_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.self_attn.k_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.self_attn.v_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.self_attn.v_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.self_attn.q_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.self_attn.q_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.self_attn.out_proj.weight	shape=(768, 768)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.self_attn.out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.layer_norm1.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.layer_norm1.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.mlp.fc1.weight	shape=(3072, 768)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.mlp.fc1.bias	shape=(3072,)	numel=3,072	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.mlp.fc2.weight	shape=(768, 3072)	numel=2,359,296	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.mlp.fc2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.layer_norm2.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.encoder.layers.11.layer_norm2.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.post_layernorm.weight	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.vision_model.post_layernorm.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.connector.modality_projection.proj.weight	shape=(960, 12288)	numel=11,796,480	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.embed_tokens.weight	shape=(49280, 960)	numel=47,308,800	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.0.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.0.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.0.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.0.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.0.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.0.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.0.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.0.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.0.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.1.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.1.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.1.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.1.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.1.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.1.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.1.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.1.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.1.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.2.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.2.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.2.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.2.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.2.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.2.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.2.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.2.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.2.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.3.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.3.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.3.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.3.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.3.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.3.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.3.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.3.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.3.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.4.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.4.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.4.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.4.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.4.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.4.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.4.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.4.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.4.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.5.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.5.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.5.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.5.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.5.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.5.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.5.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.5.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.5.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.6.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.6.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.6.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.6.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.6.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.6.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.6.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.6.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.6.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.7.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.7.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.7.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.7.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.7.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.7.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.7.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.7.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.7.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.8.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.8.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.8.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.8.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.8.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.8.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.8.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.8.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.8.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.9.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.9.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.9.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.9.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.9.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.9.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.9.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.9.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.9.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.10.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.10.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.10.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.10.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.10.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.10.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.10.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.10.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.10.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.11.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.11.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.11.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.11.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.11.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.11.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.11.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.11.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.11.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.12.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.12.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.12.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.12.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.12.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.12.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.12.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.12.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.12.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.13.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.13.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.13.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.13.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.13.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.13.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.13.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.13.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.13.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.14.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.14.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.14.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.14.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.14.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.14.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.14.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.14.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.14.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.15.self_attn.q_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.15.self_attn.k_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.15.self_attn.v_proj.weight	shape=(320, 960)	numel=307,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.15.self_attn.o_proj.weight	shape=(960, 960)	numel=921,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.15.mlp.gate_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.15.mlp.up_proj.weight	shape=(2560, 960)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.15.mlp.down_proj.weight	shape=(960, 2560)	numel=2,457,600	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.15.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.layers.15.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.vlm.model.text_model.norm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.0.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.0.self_attn.k_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.0.self_attn.v_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.0.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.0.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.0.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.0.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.0.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.0.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.1.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.1.self_attn.k_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.1.self_attn.v_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.1.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.1.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.1.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.1.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.1.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.1.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.2.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.2.self_attn.k_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.2.self_attn.v_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.2.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.2.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.2.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.2.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.2.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.2.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.3.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.3.self_attn.k_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.3.self_attn.v_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.3.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.3.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.3.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.3.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.3.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.3.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.4.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.4.self_attn.k_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.4.self_attn.v_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.4.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.4.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.4.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.4.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.4.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.4.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.5.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.5.self_attn.k_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.5.self_attn.v_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.5.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.5.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.5.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.5.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.5.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.5.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.6.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.6.self_attn.k_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.6.self_attn.v_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.6.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.6.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.6.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.6.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.6.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.6.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.7.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.7.self_attn.k_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.7.self_attn.v_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.7.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.7.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.7.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.7.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.7.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.7.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.8.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.8.self_attn.k_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.8.self_attn.v_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.8.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.8.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.8.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.8.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.8.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.8.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.9.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.9.self_attn.k_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.9.self_attn.v_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.9.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.9.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.9.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.9.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.9.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.9.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.10.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.10.self_attn.k_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.10.self_attn.v_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.10.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.10.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.10.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.10.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.10.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.10.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.11.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.11.self_attn.k_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.11.self_attn.v_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.11.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.11.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.11.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.11.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.11.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.11.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.12.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.12.self_attn.k_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.12.self_attn.v_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.12.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.12.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.12.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.12.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.12.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.12.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.13.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.13.self_attn.k_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.13.self_attn.v_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.13.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.13.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.13.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.13.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.13.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.13.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.14.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.14.self_attn.k_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.14.self_attn.v_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.14.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.14.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.14.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.14.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.14.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.14.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.15.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.15.self_attn.k_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.15.self_attn.v_proj.weight	shape=(320, 320)	numel=102,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.15.self_attn.o_proj.weight	shape=(720, 960)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.15.mlp.gate_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.15.mlp.up_proj.weight	shape=(2048, 720)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.15.mlp.down_proj.weight	shape=(720, 2048)	numel=1,474,560	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.15.input_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.layers.15.post_attention_layernorm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.vlm_with_expert.lm_expert.norm.weight	shape=(720,)	numel=720	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
+model.state_proj.weight	shape=(960, 32)	numel=30,720	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.state_proj.bias	shape=(960,)	numel=960	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.action_in_proj.weight	shape=(720, 32)	numel=23,040	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.action_in_proj.bias	shape=(720,)	numel=720	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.action_out_proj.weight	shape=(32, 720)	numel=23,040	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.action_out_proj.bias	shape=(32,)	numel=32	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.action_time_mlp_in.weight	shape=(720, 1440)	numel=1,036,800	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.action_time_mlp_in.bias	shape=(720,)	numel=720	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.action_time_mlp_out.weight	shape=(720, 720)	numel=518,400	requires_grad=True	dtype=torch.float32	device=cuda:0
+model.action_time_mlp_out.bias	shape=(720,)	numel=720	requires_grad=True	dtype=torch.float32	device=cuda:0
 
-=== Frozen parameters (count=0) ===
+=== Frozen parameters (count=1) ===
+model.vlm_with_expert.vlm.lm_head.weight	shape=(49280, 960)	numel=47,308,800	requires_grad=False	dtype=torch.bfloat16	device=cuda:0
 

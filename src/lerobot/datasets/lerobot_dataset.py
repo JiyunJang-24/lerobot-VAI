@@ -590,6 +590,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
+        cache_in_memory: bool = False,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -717,6 +718,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
+        self.cache_in_memory = cache_in_memory
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
@@ -882,7 +884,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.features)
-        hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
+        hf_dataset = load_nested_dataset(
+            self.root / "data",
+            features=features,
+            episodes=self.episodes,
+            keep_in_memory=self.cache_in_memory,
+        )
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
@@ -1667,7 +1674,8 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         visual_cue_mode: VISUAL_CUE_MODES = "vanilla",
         use_wrist_cam: bool = True,
-        use_state: bool = True
+        use_state: bool = True,
+        cache_in_memory: bool = False,
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -1685,6 +1693,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 tolerance_s=self.tolerances_s[repo_id],
                 download_videos=download_videos,
                 video_backend=video_backend,
+                cache_in_memory=cache_in_memory,
             )
             for repo_id in repo_ids
         ]
@@ -2143,9 +2152,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                             item['observation.wrist_image'] = torch.cat([wrist_img, wrist_axis_tensor], dim=1)
                         except:
                             pass
-                item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
                 # save_rgb_image(axis_tensor[0], "tmp_dir/axis_tensor.png")
                 # save_rgb_image(item['observation.image'][0], "tmp_dir/robot_image.png")
+                item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
             elif self.visual_cue_mode == "plucker_concat":
                 with torch.no_grad():
                     intrinsic_tensor = intrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)
