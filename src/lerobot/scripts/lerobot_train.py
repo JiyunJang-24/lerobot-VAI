@@ -16,6 +16,7 @@
 import dataclasses
 import logging
 import time
+import copy
 from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
@@ -420,7 +421,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info("Creating policy")
 
     if isinstance(dataset, MultiLeRobotDataset):
-        ds_meta = dataset._datasets[0].meta
+        ds_meta = copy.copy(dataset._datasets[0].meta)
+        ds_meta.episodes = dataset.meta_episodes
         try:
             ds_meta.stats = dataset.stats['panda']
             print("Not implementing using cross embodiment normalize yet. We use only panda stats")
@@ -428,6 +430,16 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             ds_meta.stats = dataset.stats
     else:
         ds_meta = dataset.meta
+
+    if not cfg.dataset.use_wrist_cam:
+        wrist_feature_keys = [key for key in ds_meta.features if "wrist" in key]
+        ds_meta.info["features"] = {
+            key: value for key, value in ds_meta.features.items() if key not in wrist_feature_keys
+        }
+        if hasattr(ds_meta, "stats"):
+            ds_meta.stats = {
+                key: value for key, value in ds_meta.stats.items() if key not in wrist_feature_keys
+            }
     dataset.meta = ds_meta
     policy = make_policy(
         cfg=cfg.policy,
@@ -556,7 +568,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
-        prefetch_factor=2 if cfg.num_workers > 0 else None,
+        prefetch_factor=cfg.dataloader_prefetch_factor if cfg.num_workers > 0 else None,
+        persistent_workers=cfg.dataloader_persistent_workers if cfg.num_workers > 0 else False,
     )
 
     # Prepare everything with accelerator
@@ -574,6 +587,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         "lr": AverageMeter("lr", ":0.1e"),
         "update_s": AverageMeter("updt_s", ":.3f"),
         "dataloading_s": AverageMeter("data_s", ":.3f"),
+        "fetch_s": AverageMeter("fetch_s", ":.3f"),
+        "preprocess_s": AverageMeter("prep_s", ":.3f"),
     }
 
     # Use effective batch size for proper epoch calculation in distributed training
@@ -595,8 +610,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     for _ in tqdm(range(step, cfg.steps)):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        fetch_done_time = time.perf_counter()
         batch = preprocessor(batch)
-        train_tracker.dataloading_s = time.perf_counter() - start_time
+        preprocess_done_time = time.perf_counter()
+        train_tracker.fetch_s = fetch_done_time - start_time
+        train_tracker.preprocess_s = preprocess_done_time - fetch_done_time
+        train_tracker.dataloading_s = preprocess_done_time - start_time
 
         train_tracker, output_dict = update_policy(
             train_tracker,

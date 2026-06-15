@@ -105,7 +105,10 @@ def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -
 
 
 def load_nested_dataset(
-    pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None
+    pq_dir: Path,
+    features: datasets.Features | None = None,
+    episodes: list[int] | None = None,
+    keep_in_memory: bool = False,
 ) -> Dataset:
     """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
     Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
@@ -124,7 +127,11 @@ def load_nested_dataset(
         # When no filtering needed, Dataset uses memory-mapped loading for efficiency
         # PyArrow loads the entire dataset into memory
         if episodes is None:
-            return Dataset.from_parquet([str(path) for path in paths], features=features)
+            return Dataset.from_parquet(
+                [str(path) for path in paths],
+                features=features,
+                keep_in_memory=keep_in_memory,
+            )
 
         arrow_dataset = pa_ds.dataset(paths, format="parquet")
         filter_expr = pa_ds.field("episode_index").isin(episodes)

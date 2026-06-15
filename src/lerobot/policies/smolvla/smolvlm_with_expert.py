@@ -583,7 +583,7 @@ class SmolVLMWithExpertModel(nn.Module):
         return att_output
 
     def apply_visual_cue_mode(self):
-        if self.visual_cue_mode == "basis_rescale_concat" or self.visual_cue_mode == "basis_concat":
+        if self.visual_cue_mode == "basis_rescale_concat" or self.visual_cue_mode == "basis_concat" or self.visual_cue_mode == "trace":
             self.vlm.model.vision_model.embeddings.patch_embedding = expand_in_channels_keep_rgb(
                 self.vlm.model.vision_model.embeddings.patch_embedding, new_in_chans=6,
             )
@@ -625,6 +625,8 @@ class SmolVLMWithExpertModel(nn.Module):
             self.visual_cue_out_proj = self.visual_cue_out_proj.to(dtype=vf_dtype)
             self.vision_fusion_proj = self.vision_fusion_proj.to(dtype=vf_dtype)
             self.new_visual_cue_encoder = True
+            print("Initialized visual cue encoder for {} input!.".format(self.visual_cue_mode))
+        else:
             print("Initialized visual cue encoder for {} input!.".format(self.visual_cue_mode))
         # else:
         #     print("EVAL mode")

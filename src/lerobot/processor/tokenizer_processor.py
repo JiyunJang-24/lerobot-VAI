@@ -82,6 +82,9 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
     # Internal tokenizer instance (not part of the config)
     input_tokenizer: Any = field(default=None, init=False, repr=False)
+    _tokenized_cache: dict[tuple[str, ...], dict[str, torch.Tensor]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self):
         """
@@ -214,14 +217,19 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         Returns:
             A dictionary containing tokenized 'input_ids' and 'attention_mask' as PyTorch tensors.
         """
-        return self.input_tokenizer(
-            text,
-            max_length=self.max_length,
-            truncation=self.truncation,
-            padding=self.padding,
-            padding_side=self.padding_side,
-            return_tensors="pt",
-        )
+        cache_key = (text,) if isinstance(text, str) else tuple(text)
+        cached = self._tokenized_cache.get(cache_key)
+        if cached is None:
+            cached = self.input_tokenizer(
+                text,
+                max_length=self.max_length,
+                truncation=self.truncation,
+                padding=self.padding,
+                padding_side=self.padding_side,
+                return_tensors="pt",
+            )
+            self._tokenized_cache[cache_key] = cached
+        return {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in cached.items()}
 
     def get_config(self) -> dict[str, Any]:
         """

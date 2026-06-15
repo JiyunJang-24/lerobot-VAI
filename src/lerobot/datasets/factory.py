@@ -55,12 +55,17 @@ def resolve_delta_timestamps(
     """
     delta_timestamps = {}
     for key in ds_meta.features:
+        ft = ds_meta.features[key]
+        is_visual = ft.get("dtype") in ["image", "video"]
         if key == REWARD and cfg.reward_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
         if key == ACTION and cfg.action_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
         if key.startswith(OBS_PREFIX) and cfg.observation_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.observation_delta_indices]
+            delta_indices = list(cfg.observation_delta_indices)
+            if getattr(cfg, "image_goal_cond", False) and is_visual:
+                delta_indices.append(cfg.n_action_steps)
+            delta_timestamps[key] = [i / ds_meta.fps for i in delta_indices]
 
     if len(delta_timestamps) == 0:
         delta_timestamps = None
@@ -108,7 +113,10 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
-            visual_cue_mode=cfg.policy.visual_cue_mode
+            visual_cue_mode=cfg.policy.visual_cue_mode,
+            use_wrist_cam=cfg.dataset.use_wrist_cam,
+            use_state=cfg.dataset.use_state,
+            cache_in_memory=cfg.dataset.cache_in_memory,
         )
 
         logging.info(
@@ -130,6 +138,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 revision=cfg.dataset.revision,
                 video_backend=cfg.dataset.video_backend,
                 tolerance_s=cfg.tolerance_s,
+                cache_in_memory=cfg.dataset.cache_in_memory,
+                use_wrist_cam=cfg.dataset.use_wrist_cam,
             )
         else:
             dataset = StreamingLeRobotDataset(

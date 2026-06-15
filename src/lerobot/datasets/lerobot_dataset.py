@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from typing_extensions import Never
 from collections import defaultdict
 import concurrent.futures
 import contextlib
@@ -21,7 +22,13 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-
+import einops
+import torch.nn.functional as F
+from pathlib import Path
+import numpy as np
+import torch
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 import datasets
 import numpy as np
 import packaging.version
@@ -83,6 +90,11 @@ from lerobot.datasets.visual_cue_utils import (
     _make_motion_basis_axis_rgb_tensor_cam_to_world,
     _make_motion_basis_wrist_axis_rgb_tensor_cam_to_world,
     save_rgb_image,
+    PluckerEmbedder,
+    _make_trace_trajectory_rgb_tensor_cam_to_world,
+    Depth,
+    save_depth_image,
+    is_open,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.configs.train_utils import VISUAL_CUE_MODES
@@ -578,6 +590,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
         vcodec: str = "libsvtav1",
+        cache_in_memory: bool = False,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -705,6 +718,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
+        self.cache_in_memory = cache_in_memory
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
@@ -870,7 +884,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self.features)
-        hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
+        hf_dataset = load_nested_dataset(
+            self.root / "data",
+            features=features,
+            episodes=self.episodes,
+            keep_in_memory=self.cache_in_memory,
+        )
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
@@ -1048,6 +1067,32 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._ensure_hf_dataset_loaded()
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
+        past_states = []
+        # 현재 포함해서 과거 10개 => 총 11개
+        earliest_valid_idx = idx
+        reached_boundary = False
+
+        for i in range(10, -1, -1):   # 과거 -> 현재 순서
+            if not reached_boundary:
+                candidate_idx = idx - i
+
+                if candidate_idx < 0:
+                    reached_boundary = True
+                else:
+                    candidate_ep_idx = self.hf_dataset[candidate_idx]["episode_index"].item()
+                    if candidate_ep_idx == ep_idx:
+                        earliest_valid_idx = candidate_idx
+                    else:
+                        reached_boundary = True
+
+            # boundary에 걸렸으면 earliest_valid_idx를 반복 사용
+            use_idx = earliest_valid_idx if reached_boundary else candidate_idx
+
+            state = torch.as_tensor(self.hf_dataset[use_idx]["observation.state"])
+            past_states.append(state)
+
+        item["past_states"] = torch.stack(past_states, dim=0)
+
 
         query_indices = None
         if self.delta_indices is not None:
@@ -1627,7 +1672,10 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         tolerances_s: dict | None = None,
         download_videos: bool = True,
         video_backend: str | None = None,
-        visual_cue_mode: VISUAL_CUE_MODES = "vanilla"
+        visual_cue_mode: VISUAL_CUE_MODES = "vanilla",
+        use_wrist_cam: bool = True,
+        use_state: bool = True,
+        cache_in_memory: bool = False,
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -1645,10 +1693,14 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 tolerance_s=self.tolerances_s[repo_id],
                 download_videos=download_videos,
                 video_backend=video_backend,
+                cache_in_memory=cache_in_memory,
             )
             for repo_id in repo_ids
         ]
-
+        self.use_wrist_cam = use_wrist_cam
+        print("use wrist cam: ", self.use_wrist_cam)
+        self.use_state: bool = use_state
+        print("use state: ", self.use_state)
         # Disable any data keys that are not common across all of the datasets. Note: we may relax this
         # restriction in future iterations of this class. For now, this is necessary at least for being able
         # to use PyTorch's default DataLoader collate function.
@@ -1679,7 +1731,12 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             dataset.meta.stats.pop('observation.environment_state')
         self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
         self.visual_cue_mode = visual_cue_mode
-
+        if self.visual_cue_mode == "plucker_concat":
+            self.image_size = 256
+            self.plucker_embedder = PluckerEmbedder(img_size=self.image_size, device='cpu')
+        if self.visual_cue_mode == "aimbot":
+            self.depth_model = Depth(aimbot=True, encoder='vitb')  # Initialize the depth model
+            self.add_depth(save_depth=True, batch_size=256, num_workers=16)
 
     @property
     def repo_id_to_index(self):
@@ -1748,6 +1805,22 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return sum(d.num_episodes for d in self._datasets)
 
     @property
+    def episodes(self) -> None:
+        return None
+
+    @property
+    def meta_episodes(self) -> pd.DataFrame:
+        episode_tables = []
+        frame_offset = 0
+        for dataset in self._datasets:
+            episodes = dataset.meta.episodes.to_pandas()
+            episodes["dataset_from_index"] = episodes["dataset_from_index"] + frame_offset
+            episodes["dataset_to_index"] = episodes["dataset_to_index"] + frame_offset
+            episode_tables.append(episodes)
+            frame_offset += dataset.num_frames
+        return pd.concat(episode_tables, ignore_index=True)
+
+    @property
     def tolerance_s(self) -> float:
         """Tolerance in seconds used to discard loaded frames when their timestamps
         are not close enough from the requested frames. It is only used when `delta_timestamps`
@@ -1774,14 +1847,130 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         else:
             raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
         item = self._datasets[dataset_idx][idx - start_idx]
+        try:
+            item['observation.image_depth'] = self._depth_dataset[dataset_idx]['observation.image'][idx - start_idx]
+            if 'observation.wrist_image' in item:
+                item['observation.wrist_image_depth'] = self._depth_dataset[dataset_idx]['observation.wrist_image'][idx - start_idx]
+        except:
+            pass
         item = self._get_visual_cues(item)
         item["dataset_index"] = torch.tensor(dataset_idx)
+        if self.use_wrist_cam == False:
+            item.pop('observation.wrist_image')
+            item.pop('observation.wrist_image_is_pad')
+        if self.use_state == False:
+            item['observation.state'].zero_()
         item = self._pad_item_inplace(item)
         for data_key in self.disabled_features:
             if data_key in item:
                 del item[data_key]
 
         return item
+
+    def add_depth(
+        self,
+        save_depth: bool = True,
+        batch_size: int = 256,
+        num_workers: int = 4,
+        image_keys: list[str] = ("observation.image", "observation.wrist_image"),
+        device: str = "cuda",
+    ):
+        depth_root = self.root / "depth_image"
+        depth_root.mkdir(parents=True, exist_ok=True)
+
+        image_keys = list(image_keys)
+
+        if save_depth:
+            flat_dataset = FlatDepthExtractionDataset(
+                self._datasets,
+                image_keys=image_keys,
+            )
+
+            loader = DataLoader(
+                flat_dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+                pin_memory=True,
+                persistent_workers=(num_workers > 0),
+                collate_fn=lambda batch: collate_depth_batch_multi(batch, image_keys),
+            )
+
+            self.depth_model.model.eval()
+            self.depth_model.model.to(device)
+
+            with torch.no_grad():
+                for batch in tqdm(loader, desc="Extracting and saving depth"):
+                    # 각 이미지 key별로 depth 추출
+                    depth_results = {}
+
+                    for key in image_keys:
+                        imgs = batch[key].to(device, non_blocking=True)
+
+                        # imgs shape: [B,S,C,H,W] or [B,C,H,W]
+                        if imgs.ndim == 5:
+                            B, S, C, H, W = imgs.shape
+                            imgs_flat = imgs.view(B * S, C, H, W)
+                            depth_flat = self.depth_model.model(imgs_flat)   # [B*S,1,H,W]
+                            depth = depth_flat.view(B, S, *depth_flat.shape[1:])  # [B,S,1,H,W]
+
+                        elif imgs.ndim == 4:
+                            depth = self.depth_model.model(imgs)  # [B,1,H,W]
+
+                        else:
+                            raise ValueError(f"Unexpected image shape for {key}: {imgs.shape}")
+
+                        depth_results[key] = depth.detach().cpu().numpy().astype(np.float32)
+
+                    # 저장
+                    batch_size_actual = len(batch["dataset_idx"])
+                    for i in range(batch_size_actual):
+                        dataset_idx = batch["dataset_idx"][i]
+                        item_idx = batch["item_idx"][i]
+
+                        base_dir = depth_root / f"dataset_{dataset_idx:03d}"
+                        base_dir.mkdir(parents=True, exist_ok=True)
+
+                        for key in image_keys:
+                            key_dir = base_dir / _sanitize_key(key)
+                            key_dir.mkdir(parents=True, exist_ok=True)
+
+                            save_path = key_dir / f"{item_idx:08d}.npy"
+                            np.save(save_path, depth_results[key][i])
+
+        # 저장된 depth를 읽기 위한 구조 생성
+        # self._depth_dataset[dataset_idx][image_key][local_idx]
+        self._depth_dataset = []
+
+        for dataset_idx, dataset in enumerate(self._datasets):
+            expected_len = dataset.num_frames if hasattr(dataset, "num_frames") else len(dataset)
+
+            per_dataset_depth = {}
+
+            for key in image_keys:
+                ds_dir = depth_root / f"dataset_{dataset_idx:03d}" / _sanitize_key(key)
+
+                if not ds_dir.exists():
+                    raise FileNotFoundError(
+                        f"Depth directory not found for dataset {dataset_idx}, key {key}: {ds_dir}"
+                    )
+
+                depth_dataset = NpyDepthDataset(ds_dir)
+
+                if len(depth_dataset) != expected_len:
+                    raise ValueError(
+                        f"Depth dataset length mismatch for dataset {dataset_idx}, key {key}: "
+                        f"depth={len(depth_dataset)}, original={expected_len}"
+                    )
+
+                per_dataset_depth[key] = depth_dataset
+
+            self._depth_dataset.append(per_dataset_depth)
+
+        if save_depth:
+            print(f"Depth extraction complete. Saved to {depth_root}")
+        else:
+            print(f"Loaded precomputed depth datasets from {depth_root}")
 
     def __repr__(self):
         return (
@@ -1963,9 +2152,120 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                             item['observation.wrist_image'] = torch.cat([wrist_img, wrist_axis_tensor], dim=1)
                         except:
                             pass
-                item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
                 # save_rgb_image(axis_tensor[0], "tmp_dir/axis_tensor.png")
                 # save_rgb_image(item['observation.image'][0], "tmp_dir/robot_image.png")
+                item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
+            elif self.visual_cue_mode == "plucker_concat":
+                with torch.no_grad():
+                    intrinsic_tensor = intrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)
+                    extrinsic_tensor = extrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)
+                    plucker_data = self.plucker_embedder(intrinsic_tensor, extrinsic_tensor)
+                    plucker_tensor = einops.rearrange(plucker_data['plucker'], 's h w c -> s c h w')
+                    item['observation.image'] = torch.cat([img, plucker_tensor], dim=1)
+
+            elif self.visual_cue_mode == "trace":
+                with torch.no_grad():
+                    past_states = item["past_states"]   # (T,D) or (B,T,D), past -> current
+                    trace_tensor, trace_uv = _make_trace_trajectory_rgb_tensor_cam_to_world(
+                        rgb_tensor=img,
+                        past_states=past_states,
+                        intrinsic_matrix=intrinsic_matrix,
+                        cam_to_world=extrinsic_matrix,
+                        state_pose_slice=slice(-7, -4),   # xyz from last 7 dims
+                        return_overlay=True,             # cue only
+                        overlay_alpha=0.85,
+                        line_thickness=2,
+                        point_radius=2,
+                        arrow_thickness=3,
+                        arrow_tip_length=0.25,
+                        draw_points=True,
+                        draw_final_arrow=True,
+                        clip_outside=True,
+                    )
+                    save_rgb_image(trace_tensor, "tmp_dir/trace_image.png")
+                    item["observation.image"] = torch.cat([img, trace_tensor], dim=1)
+                    try:
+                        wrist_img = item['observation.wrist_image']
+                        wrist_intrinsic_matrix = item['wrist_intrinsic_matrix']
+                        wrist_extrinsic_matrix = item['wrist_extrinsic_matrix']
+                        wrist_plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(wrist_extrinsic_matrix)
+                        trace_tensor, trace_uv = _make_trace_trajectory_rgb_tensor_cam_to_world(
+                            rgb_tensor=wrist_img,
+                            past_states=past_states,
+                            intrinsic_matrix=wrist_intrinsic_matrix,
+                            cam_to_world=wrist_plucker_extrinsic_matrix,
+                            state_pose_slice=slice(-7, -4),   # xyz from last 7 dims
+                            return_overlay=True,             # cue only
+                            overlay_alpha=0.85,
+                            line_thickness=1,
+                            point_radius=2,
+                            arrow_thickness=1,
+                            arrow_tip_length=0.25,
+                            draw_points=True,
+                            draw_final_arrow=True,
+                            clip_outside=True,
+                        )
+                        save_rgb_image(trace_tensor, "tmp_dir/wrist_trace_image.png")
+                        item['observation.wrist_image'] = torch.cat([wrist_img, trace_tensor], dim=1)
+                    except:
+                        pass
+            elif self.visual_cue_mode == "aimbot":
+                #get depth with depth anything model
+                with torch.no_grad():
+                    depth_image = item['observation.image_depth'].unsqueeze(1)   # (B,1,H,W)
+                    depth_image = depth_image.max() - depth_image
+                    depth_image_256 = F.interpolate(
+                        depth_image,
+                        size=(256, 256),
+                        mode="bilinear",
+                        align_corners=False
+                    )
+                    img_with_aimbot = self.depth_model.get_aimbot_overlay(
+                        rgb_tensor=img.squeeze(0),
+                        depth_tensor=depth_image_256.squeeze(0).squeeze(0).numpy(),
+                        extrinsic_matrix=np.linalg.inv(item['extrinsic_matrix'].numpy()),
+                        intrinsic_matrix=intrinsic_matrix.numpy(),
+                        gripper_pos=robot_state[:,2:5].squeeze(0).numpy(),
+                        gripper_quat=robot_state[:, 5:].squeeze(0).numpy(),
+                        gripper_open=is_open(robot_state[:, :2].squeeze(0).numpy()),
+                        image_height=256,
+                        image_width=256,
+                        use_front=True,
+                    )
+                    item["observation.image"] = img_with_aimbot
+                    save_depth_image(depth_image_256, "tmp_dir/depth.png")
+                    save_rgb_image(img_with_aimbot, "tmp_dir/rgb_with_aimbot.png")
+
+                    #same process for wrist image
+                    try:
+                        wrist_img = item['observation.wrist_image']
+                        wrist_intrinsic_matrix = item['wrist_intrinsic_matrix']
+                        wrist_extrinsic_matrix = item['wrist_extrinsic_matrix']
+                        wrist_depth_image = item['observation.wrist_image_depth'].unsqueeze(1)
+                        wrist_depth_image_256 = F.interpolate(
+                            wrist_depth_image,
+                            size=(256, 256),
+                            mode="bilinear",
+                            align_corners=False
+                        )
+                        wrist_img_with_aimbot = self.depth_model.get_aimbot_overlay(
+                            rgb_tensor=wrist_img.squeeze(0),
+                            depth_tensor=wrist_depth_image_256.squeeze(0).squeeze(0).numpy(),
+                            extrinsic_matrix=np.linalg.inv(wrist_extrinsic_matrix.numpy()),
+                            intrinsic_matrix=wrist_intrinsic_matrix.numpy(),
+                            gripper_pos=robot_state[:,2:5].squeeze(0).numpy(),
+                            gripper_quat=robot_state[:, 5:].squeeze(0).numpy(),
+                            gripper_open=is_open(robot_state[:, :2].squeeze(0).numpy()),
+                            image_height=256,
+                            image_width=256,
+                            use_front=False,
+                        )
+                        item["observation.wrist_image"] = wrist_img_with_aimbot
+                        # save_depth_image(wrist_depth_image_256, "tmp_dir/wrist_depth.png")
+                        # save_rgb_image(wrist_img_with_aimbot, "tmp_dir/wrist_rgb_with_aimbot.png")
+                        # item['observation.wrist_image'] = torch.cat([wrist_img, trace_tensor], dim=1)
+                    except:
+                        pass
 
         except Exception as e:
             print(e)
@@ -1977,3 +2277,68 @@ def _get_tensor_shape_dtype(ds, k, sample_idx=0):
         if not isinstance(v, torch.Tensor):
             return None
         return tuple(v.shape), v.dtype
+
+
+from pathlib import Path
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+
+
+class NpyDepthDataset(Dataset):
+    def __init__(self, root_dir: str):
+        self.root_dir = Path(root_dir)
+        self.files = sorted(self.root_dir.glob("*.npy"))
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        depth = np.load(self.files[idx])
+        return torch.from_numpy(depth).float()
+
+
+class FlatDepthExtractionDataset(Dataset):
+    def __init__(self, datasets, image_keys):
+        self.datasets = datasets
+        self.image_keys = image_keys
+        self.index_map = []
+
+        for dataset_idx, dataset in enumerate(datasets):
+            n = dataset.num_frames if hasattr(dataset, "num_frames") else len(dataset)
+            for item_idx in range(n):
+                self.index_map.append((dataset_idx, item_idx))
+
+    def __len__(self):
+        return len(self.index_map)
+
+    def __getitem__(self, global_idx):
+        dataset_idx, item_idx = self.index_map[global_idx]
+        item = self.datasets[dataset_idx][item_idx]
+
+        out = {
+            "dataset_idx": dataset_idx,
+            "item_idx": item_idx,
+        }
+
+        for key in self.image_keys:
+            item[key] = F.interpolate(item[key], size=(224,224), mode='bilinear', align_corners=False, antialias=True)
+            out[key] = item[key]
+
+        return out
+
+def collate_depth_batch_multi(batch, image_keys):
+    out = {
+        "dataset_idx": [b["dataset_idx"] for b in batch],
+        "item_idx": [b["item_idx"] for b in batch],
+    }
+
+    for key in image_keys:
+        imgs = [b[key] for b in batch]
+        out[key] = torch.stack(imgs, dim=0)
+
+    return out
+
+def _sanitize_key(key: str) -> str:
+    # 폴더 이름으로 안전하게 바꾸기
+    return key.replace("/", "_")
