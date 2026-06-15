@@ -63,7 +63,7 @@ jupyter-core==5.9.1
 jupytext==1.18.1
 kiwisolver==1.4.9
 -e file:////data1/local/lerobot-VAI
--e file:////data1/local/lerobot-VAI/LIBERO
+-e file:////data1/local/lerobot-VAI/third_party/LIBERO
 llvmlite==0.46.0
 markdown==3.10
 markdown-it-py==4.0.0

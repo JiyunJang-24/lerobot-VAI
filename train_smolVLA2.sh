@@ -9,7 +9,7 @@
 
 # SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 # REPO_ROOT="${SCRIPT_DIR}/.."
-# export PYTHONPATH="${REPO_ROOT}/LIBERO:${PYTHONPATH}"
+# export PYTHONPATH="${REPO_ROOT}/third_party:${REPO_ROOT}/third_party/LIBERO/libero:${PYTHONPATH}"
 
 # CUDA_VISIBLE_DEVICES=0 python src/lerobot/scripts/lerobot_train.py \
 #   --dataset.repo_id=[v-1.000-1.000_num1,v-1.000-1.000_num2,v-1.000-1.000_num3,v-1.000-1.000_num4,v-1.000-1.000_num5,v-1.000-1.000_num6,v-1.000-1.000_num7,v-1.000-1.000_num8,v-1.000-1.000_num9,v-1.000-1.000_num10] \
@@ -36,7 +36,7 @@
 
 
 # SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
-# export PYTHONPATH="${SCRIPT_DIR}/src:${SCRIPT_DIR}/LIBERO:${PYTHONPATH:-}"
+# export PYTHONPATH="${SCRIPT_DIR}/src:${SCRIPT_DIR}/third_party:${SCRIPT_DIR}/third_party/LIBERO/libero:${PYTHONPATH:-}"
 
 # CUDA_VISIBLE_DEVICES=1 python src/lerobot/scripts/lerobot_train.py \
 #   --dataset.repo_id=[libero_10/RMA_vla_50_01_330.0_330.0/v-1.000-1.000_num1,libero_goal/RMA_vla_50_01_15.0_15.0/v-1.000-1.000_num1,libero_object/RMA_vla_50_01_30.0_30.0/v-1.000-1.000_num1,libero_spatial/RMA_vla_50_01_0.0_0.0/v-1.000-1.000_num1,libero_spatial/RMA_vla_50_01_345.0_345.0/v-1.000-1.000_num3] \
@@ -64,7 +64,7 @@
 # # --wandb.project=smolVLA_wrist_libero_goal \
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
-export PYTHONPATH="${SCRIPT_DIR}/src:${SCRIPT_DIR}/LIBERO:${PYTHONPATH:-}"
+export PYTHONPATH="${SCRIPT_DIR}/src:${SCRIPT_DIR}/third_party:${SCRIPT_DIR}/third_party/LIBERO/libero:${PYTHONPATH:-}"
 
 CUDA_VISIBLE_DEVICES=1 python src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=[libero_10/RMA_vla_50_01_330.0_330.0/v-1.000-1.000_num1,libero_goal/RMA_vla_50_01_15.0_15.0/v-1.000-1.000_num1,libero_object/RMA_vla_50_01_30.0_30.0/v-1.000-1.000_num1,libero_spatial/RMA_vla_50_01_0.0_0.0/v-1.000-1.000_num1,libero_spatial/RMA_vla_50_01_345.0_345.0/v-1.000-1.000_num3] \
@@ -92,7 +92,7 @@ CUDA_VISIBLE_DEVICES=1 python src/lerobot/scripts/lerobot_train.py \
 # --wandb.project=smolVLA_wrist_libero_goal \
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
-export PYTHONPATH="${SCRIPT_DIR}/src:${SCRIPT_DIR}/LIBERO:${PYTHONPATH:-}"
+export PYTHONPATH="${SCRIPT_DIR}/src:${SCRIPT_DIR}/third_party:${SCRIPT_DIR}/third_party/LIBERO/libero:${PYTHONPATH:-}"
 
 CUDA_VISIBLE_DEVICES=1 python src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=[libero_10/RMA_vla_50_01_330.0_330.0/v-1.000-1.000_num1,libero_goal/RMA_vla_50_01_15.0_15.0/v-1.000-1.000_num1,libero_object/RMA_vla_50_01_30.0_30.0/v-1.000-1.000_num1,libero_spatial/RMA_vla_50_01_0.0_0.0/v-1.000-1.000_num1,libero_spatial/RMA_vla_50_01_345.0_345.0/v-1.000-1.000_num3] \

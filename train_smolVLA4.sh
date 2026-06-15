@@ -7,10 +7,10 @@
 
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
-REPO_ROOT="${SCRIPT_DIR}/.."
-export PYTHONPATH="${REPO_ROOT}/LIBERO:${PYTHONPATH}"
-export PYTHONPATH="${REPO_ROOT}/third_party/AimBot/src/crosshair:${PYTHONPATH}"
-export PYTHONPATH="${REPO_ROOT}/third_party/Depth_Anything_V2:${PYTHONPATH}"
+REPO_ROOT="${SCRIPT_DIR}"
+export PYTHONPATH="${REPO_ROOT}/third_party:${REPO_ROOT}/third_party/LIBERO/libero:${PYTHONPATH}"
+export PYTHONPATH="${REPO_ROOT}/third_party/aimbot/third_party/AimBot/src/crosshair:${PYTHONPATH}"
+export PYTHONPATH="${REPO_ROOT}/third_party/depth_anything:${PYTHONPATH}"
 CUDA_VISIBLE_DEVICES=3 python src/lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=[v-1.000-1.000_num1,v-1.000-1.000_num2,v-1.000-1.000_num3,v-1.000-1.000_num4,v-1.000-1.000_num5,v-1.000-1.000_num6,v-1.000-1.000_num7,v-1.000-1.000_num8,v-1.000-1.000_num9,v-1.000-1.000_num10] \
   --dataset.root="/home/kwonmc/jiyun/lerobot-VAI/dataset_git/libero_goal_reproduce" \

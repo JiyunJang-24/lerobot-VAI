@@ -92,9 +92,6 @@ from lerobot.datasets.visual_cue_utils import (
     save_rgb_image,
     PluckerEmbedder,
     _make_trace_trajectory_rgb_tensor_cam_to_world,
-    Depth,
-    save_depth_image,
-    is_open,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.configs.train_utils import VISUAL_CUE_MODES
@@ -1734,9 +1731,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         if self.visual_cue_mode == "plucker_concat":
             self.image_size = 256
             self.plucker_embedder = PluckerEmbedder(img_size=self.image_size, device='cpu')
-        if self.visual_cue_mode == "aimbot":
-            self.depth_model = Depth(aimbot=True, encoder='vitb')  # Initialize the depth model
-            self.add_depth(save_depth=True, batch_size=256, num_workers=16)
+        # if self.visual_cue_mode == "aimbot":
+        #     self.depth_model = Depth(aimbot=True, encoder='vitb')  # Initialize the depth model
+        #     self.add_depth(save_depth=True, batch_size=256, num_workers=16)
 
     @property
     def repo_id_to_index(self):
@@ -2207,63 +2204,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                         )
                         save_rgb_image(trace_tensor, "tmp_dir/wrist_trace_image.png")
                         item['observation.wrist_image'] = torch.cat([wrist_img, trace_tensor], dim=1)
-                    except:
-                        pass
-            elif self.visual_cue_mode == "aimbot":
-                #get depth with depth anything model
-                with torch.no_grad():
-                    depth_image = item['observation.image_depth'].unsqueeze(1)   # (B,1,H,W)
-                    depth_image = depth_image.max() - depth_image
-                    depth_image_256 = F.interpolate(
-                        depth_image,
-                        size=(256, 256),
-                        mode="bilinear",
-                        align_corners=False
-                    )
-                    img_with_aimbot = self.depth_model.get_aimbot_overlay(
-                        rgb_tensor=img.squeeze(0),
-                        depth_tensor=depth_image_256.squeeze(0).squeeze(0).numpy(),
-                        extrinsic_matrix=np.linalg.inv(item['extrinsic_matrix'].numpy()),
-                        intrinsic_matrix=intrinsic_matrix.numpy(),
-                        gripper_pos=robot_state[:,2:5].squeeze(0).numpy(),
-                        gripper_quat=robot_state[:, 5:].squeeze(0).numpy(),
-                        gripper_open=is_open(robot_state[:, :2].squeeze(0).numpy()),
-                        image_height=256,
-                        image_width=256,
-                        use_front=True,
-                    )
-                    item["observation.image"] = img_with_aimbot
-                    save_depth_image(depth_image_256, "tmp_dir/depth.png")
-                    save_rgb_image(img_with_aimbot, "tmp_dir/rgb_with_aimbot.png")
-
-                    #same process for wrist image
-                    try:
-                        wrist_img = item['observation.wrist_image']
-                        wrist_intrinsic_matrix = item['wrist_intrinsic_matrix']
-                        wrist_extrinsic_matrix = item['wrist_extrinsic_matrix']
-                        wrist_depth_image = item['observation.wrist_image_depth'].unsqueeze(1)
-                        wrist_depth_image_256 = F.interpolate(
-                            wrist_depth_image,
-                            size=(256, 256),
-                            mode="bilinear",
-                            align_corners=False
-                        )
-                        wrist_img_with_aimbot = self.depth_model.get_aimbot_overlay(
-                            rgb_tensor=wrist_img.squeeze(0),
-                            depth_tensor=wrist_depth_image_256.squeeze(0).squeeze(0).numpy(),
-                            extrinsic_matrix=np.linalg.inv(wrist_extrinsic_matrix.numpy()),
-                            intrinsic_matrix=wrist_intrinsic_matrix.numpy(),
-                            gripper_pos=robot_state[:,2:5].squeeze(0).numpy(),
-                            gripper_quat=robot_state[:, 5:].squeeze(0).numpy(),
-                            gripper_open=is_open(robot_state[:, :2].squeeze(0).numpy()),
-                            image_height=256,
-                            image_width=256,
-                            use_front=False,
-                        )
-                        item["observation.wrist_image"] = wrist_img_with_aimbot
-                        # save_depth_image(wrist_depth_image_256, "tmp_dir/wrist_depth.png")
-                        # save_rgb_image(wrist_img_with_aimbot, "tmp_dir/wrist_rgb_with_aimbot.png")
-                        # item['observation.wrist_image'] = torch.cat([wrist_img, trace_tensor], dim=1)
                     except:
                         pass
 

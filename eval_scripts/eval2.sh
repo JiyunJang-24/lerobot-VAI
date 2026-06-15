@@ -11,7 +11,7 @@ source ${VENV_PATH}/bin/activate
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 REPO_ROOT="${SCRIPT_DIR}/.."
-export PYTHONPATH="${REPO_ROOT}/LIBERO:${PYTHONPATH}"
+export PYTHONPATH="${REPO_ROOT}/third_party:${REPO_ROOT}/third_party/LIBERO/libero:${PYTHONPATH}"
 
 # Do avoid EGL device display error
 export MUJOCO_GL=osmesa

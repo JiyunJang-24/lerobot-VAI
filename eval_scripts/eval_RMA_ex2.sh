@@ -13,7 +13,7 @@ fi
 
 source ${VENV_PATH}/bin/activate
 
-export PYTHONPATH="${REPO_ROOT}/LIBERO:${PYTHONPATH:-}"
+export PYTHONPATH="${REPO_ROOT}/third_party:${REPO_ROOT}/third_party/LIBERO/libero:${PYTHONPATH:-}"
 
 # Do avoid EGL device display error
 export MUJOCO_GL=osmesa

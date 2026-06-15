@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
-REPO_ROOT="${SCRIPT_DIR}/.."
-export PYTHONPATH="${SCRIPT_DIR}/src:${REPO_ROOT}/LIBERO:${PYTHONPATH:-}"
+REPO_ROOT="${SCRIPT_DIR}"
+export PYTHONPATH="${SCRIPT_DIR}/src:${REPO_ROOT}/third_party:${REPO_ROOT}/third_party/LIBERO/libero:${PYTHONPATH:-}"
 
 # Keep dataloader workers from oversubscribing CPU threads while decoding images.
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
