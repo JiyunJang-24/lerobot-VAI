@@ -115,7 +115,7 @@ CUDA_VISIBLE_DEVICES=0 python src/lerobot/scripts/lerobot_train.py \
   --policy.visual_cue_mode="plucker_concat" \
   --policy.load_vlm_weights=true \
   --policy.freeze_vision_encoder=false \
-  --policy.train_expert_only=false
+  --policy.train_expert_only=true
 # Training checkpoints will be saved under: lerobot/outputs/train/202x-xx-xx/xx-xx-xx_diffusion
 # --wandb.project=smolVLA_wrist_libero_goal \
 
