@@ -1728,7 +1728,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             dataset.meta.stats.pop('observation.environment_state')
         self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
         self.visual_cue_mode = visual_cue_mode
-        if self.visual_cue_mode == "plucker_concat":
+        if self.visual_cue_mode == "plucker_concat" or self.visual_cue_mode == "plucker":
             self.image_size = 256
             self.plucker_embedder = PluckerEmbedder(img_size=self.image_size, device='cpu')
         # if self.visual_cue_mode == "aimbot":
@@ -1853,8 +1853,11 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         item = self._get_visual_cues(item)
         item["dataset_index"] = torch.tensor(dataset_idx)
         if self.use_wrist_cam == False:
-            item.pop('observation.wrist_image')
-            item.pop('observation.wrist_image_is_pad')
+            try:
+                item.pop('observation.wrist_image')
+                item.pop('observation.wrist_image_is_pad')
+            except KeyError:
+                pass
         if self.use_state == False:
             item['observation.state'].zero_()
         item = self._pad_item_inplace(item)
@@ -2152,7 +2155,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 # save_rgb_image(axis_tensor[0], "tmp_dir/axis_tensor.png")
                 # save_rgb_image(item['observation.image'][0], "tmp_dir/robot_image.png")
                 item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
-            elif self.visual_cue_mode == "plucker_concat":
+            elif self.visual_cue_mode == "plucker_concat" or self.visual_cue_mode == "plucker":
                 with torch.no_grad():
                     intrinsic_tensor = intrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)
                     extrinsic_tensor = extrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)

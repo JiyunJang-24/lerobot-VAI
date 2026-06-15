@@ -254,7 +254,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.init_rtc_processor()
         self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
         self.reset()
-        if self.config.visual_cue_mode == "plucker_concat":
+        if self.config.visual_cue_mode == "plucker_concat" or self.config.visual_cue_mode == "plucker":
             self.image_size = 256
             self.plucker_embedder = PluckerEmbedder(img_size=self.image_size, device='cuda')
 
@@ -573,7 +573,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
                 item['observation.image'] = torch.cat([img, axis_tensor], dim=1)
                 # save_rgb_image(axis_tensor[0], "tmp_dir/axis_tensor.png")
                 # save_rgb_image(item['observation.image'][0], "tmp_dir/robot_image.png")
-            elif self.config.visual_cue_mode == "plucker_concat":
+            elif self.config.visual_cue_mode == "plucker_concat" or self.config.visual_cue_mode == "plucker":
                 intrinsic_tensor = intrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1).cuda()
                 extrinsic_tensor = extrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1).cuda()
                 plucker_data = self.plucker_embedder(intrinsic_tensor, extrinsic_tensor)
