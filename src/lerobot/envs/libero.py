@@ -28,11 +28,19 @@ import torch
 from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
+from libero.libero.envs.env_wrapper import ControlEnv
+import libero.libero.envs as libero_envs
 
 from lerobot.processor import RobotObservation
 
 from robosuite.utils import camera_utils as CU
-
+import sys
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
+if not hasattr(libero_envs, "ControlEnv"):
+    libero_envs.ControlEnv = ControlEnv
+import LIBERO.xyg_scripts.rotate_recolor_dataset as rotate_recolor_dataset
+from PIL import Image
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
     """Normalize camera_name into a non-empty list of strings."""
@@ -67,6 +75,26 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
         if t < 0 or t >= total_tasks:
             raise ValueError(f"task_id {t} out of range [0, {total_tasks - 1}].")
     return ids
+
+
+def _normalize_task_ids(task_ids: int | str | Iterable[int] | None) -> list[int] | None:
+    """Normalize CLI-friendly task id inputs into a list of ints."""
+    if task_ids is None:
+        return None
+    if isinstance(task_ids, int):
+        return [task_ids]
+    if isinstance(task_ids, str):
+        stripped = task_ids.strip()
+        if not stripped:
+            return None
+        stripped = stripped.strip("[]()")
+        return [int(t.strip()) for t in stripped.split(",") if t.strip()]
+    return [int(t) for t in task_ids]
+
+
+def _obs_camera_name_to_sim_name(camera_name: str) -> str:
+    """Convert LIBERO observation camera keys to robosuite camera names."""
+    return camera_name.removesuffix("_image")
 
 
 def get_task_init_states(task_suite: Any, i: int) -> np.ndarray:
@@ -117,9 +145,13 @@ class LiberoEnv(gym.Env):
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
         control_mode: str = "relative",
+        viewpoint_rotate: float = 0.0,
+        viewpoint_debug: bool = False,
+        viewpoint_debug_dir: str | None = None,
     ):
         super().__init__()
         self.task_id = task_id
+        self.task_suite_name = task_suite_name
         self.obs_type = obs_type
         self.render_mode = render_mode
         self.observation_width = observation_width
@@ -130,7 +162,11 @@ class LiberoEnv(gym.Env):
         self.camera_name = _parse_camera_names(
             camera_name
         )  # agentview_image (main) or robot0_eye_in_hand_image (wrist)
-
+        self.viewpoint_rotate = viewpoint_rotate
+        self.viewpoint_debug = viewpoint_debug
+        self.viewpoint_debug_dir = Path(viewpoint_debug_dir) if viewpoint_debug_dir else None
+        self._viewpoint_debug_saved = False
+        
         # Map raw camera names to "image1" and "image2".
         # The preprocessing step `preprocess_observation` will then prefix these with `.images.*`,
         # following the LeRobot convention (e.g., `observation.images.image`, `observation.images.image2`).
@@ -310,11 +346,31 @@ class LiberoEnv(gym.Env):
 
     def _get_extrinsic_intrinsic(self, camera_name: str):
         sim = self._env.env.sim
-        env_cam_name = camera_name.replace("_image", "")
+        env_cam_name = _obs_camera_name_to_sim_name(camera_name)
         intrinsic_matrix = CU.get_camera_intrinsic_matrix(sim, env_cam_name, self.observation_height, self.observation_width)
         extrinsic_matrix = CU.get_camera_extrinsic_matrix(sim, env_cam_name)
 
         return intrinsic_matrix, extrinsic_matrix
+
+    def _save_viewpoint_debug_image(self, camera_name: str, label: str):
+        if not self.viewpoint_debug or self.viewpoint_debug_dir is None:
+            return
+
+        self.viewpoint_debug_dir.mkdir(parents=True, exist_ok=True)
+        sim_camera_name = _obs_camera_name_to_sim_name(camera_name)
+        image = self._env.env.sim.render(
+            camera_name=sim_camera_name,
+            width=self.observation_width,
+            height=self.observation_height,
+            depth=False,
+            mode="offscreen",
+        )
+        safe_angle = f"{self.viewpoint_rotate:g}".replace("-", "m").replace(".", "p")
+        filename = (
+            f"{self.task_suite_name}_task{self.task_id}_episode{self.episode_index}_"
+            f"angle{safe_angle}_{label}.png"
+        )
+        Image.fromarray(image[::-1]).save(self.viewpoint_debug_dir / filename)
 
     def reset(self, seed=None, **kwargs):
         super().reset(seed=seed)
@@ -322,6 +378,23 @@ class LiberoEnv(gym.Env):
         raw_obs = self._env.reset()
         if self.init_states and self._init_states is not None:
             raw_obs = self._env.set_init_state(self._init_states[self._init_state_id])
+        robot_base_name = "robot0_link0"
+        camera_name = "agentview_image"  # hard coded main camera for rotation
+        sim_camera_name = _obs_camera_name_to_sim_name(camera_name)
+        if self.viewpoint_debug and not self._viewpoint_debug_saved:
+            self._save_viewpoint_debug_image(camera_name, "before")
+        camera_id = self._env.env.sim.model.camera_name2id(sim_camera_name)
+        self._env = rotate_recolor_dataset.rotate_camera(
+            self._env,
+            camera_id=camera_id,
+            camera_name=sim_camera_name,
+            robot_base_name=robot_base_name,
+            theta=self.viewpoint_rotate,
+            debug=False,
+        )
+        if self.viewpoint_debug and not self._viewpoint_debug_saved:
+            self._save_viewpoint_debug_image(camera_name, "after")
+            self._viewpoint_debug_saved = True
         # After reset, objects may be unstable (slightly floating, intersecting, etc.).
         # Step the simulator with a no-op action for a few frames so everything settles.
         # Increasing this value can improve determinism and reproducibility across resets.
@@ -438,6 +511,7 @@ def create_libero_envs(
 
     gym_kwargs = dict(gym_kwargs or {})
     task_ids_filter = gym_kwargs.pop("task_ids", None)  # optional: limit to specific tasks
+    task_ids_filter = _normalize_task_ids(task_ids_filter)
 
     camera_names = _parse_camera_names(camera_name)
     suite_names = [s.strip() for s in str(task).split(",") if s.strip()]

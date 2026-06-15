@@ -62,8 +62,8 @@ jsonschema-specifications==2025.9.1
 jupyter-core==5.9.1
 jupytext==1.18.1
 kiwisolver==1.4.9
--e file:///workspace/jiyun/lerobot-VAI
--e file:///workspace/jiyun/lerobot-VAI/LIBERO
+-e file:////data1/local/lerobot-VAI
+-e file:////data1/local/lerobot-VAI/LIBERO
 llvmlite==0.46.0
 markdown==3.10
 markdown-it-py==4.0.0

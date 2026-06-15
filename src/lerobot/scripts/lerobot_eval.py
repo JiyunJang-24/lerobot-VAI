@@ -90,7 +90,6 @@ from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
-import LIBERO.xyg_scripts.rotate_recolor_dataset as rotate_recolor_dataset
 
 def rollout(
     env: gym.vector.VectorEnv,
@@ -175,6 +174,7 @@ def rollout(
 
         observation = preprocessor(observation)
         with torch.inference_mode():
+            # observation.pop("observation.wrist_image")
             action = policy.select_action(observation)
         action = postprocessor(action)
 

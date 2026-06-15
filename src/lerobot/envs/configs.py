@@ -260,6 +260,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
 @dataclass
 class LiberoEnv(EnvConfig):
     task: str = "libero_10"  # can also choose libero_spatial, libero_object, etc.
+    task_ids: str | None = None  # comma-separated task ids, e.g. "0" or "0,2"
     fps: int = 30
     episode_length: int | None = None
     obs_type: str = "pixels_agent_pos"
@@ -289,6 +290,9 @@ class LiberoEnv(EnvConfig):
         }
     )
     control_mode: str = "relative"  # or "absolute"
+    viewpoint_rotate: float = 0.0
+    viewpoint_debug: bool = False
+    viewpoint_debug_dir: str | None = None
 
     def __post_init__(self):
         if self.obs_type == "pixels":
@@ -341,6 +345,10 @@ class LiberoEnv(EnvConfig):
         return {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
+            "task_ids": self.task_ids,
+            "viewpoint_rotate": self.viewpoint_rotate,
+            "viewpoint_debug": self.viewpoint_debug,
+            "viewpoint_debug_dir": self.viewpoint_debug_dir,
         }
 
 

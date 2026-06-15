@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Default paths if not provided
-VANILLA_JSON=${1:-"/root/Desktop/workspace/jiyun/lerobot-VAI/outputs/eval/2026-01-20/17-01-52_smolvla_spatial_vanilla_reproduce/eval_info.json"}
-BASIS_JSON=${2:-"/root/Desktop/workspace/jiyun/lerobot-VAI/outputs/eval/2026-01-20/17-01-53_smolvla_spatial_basis_concat_reproduce/eval_info.json"}
-OUTPUT_CSV=${3:-"merged_eval_results.csv"}
+VANILLA_JSON=${1:-"/data1/local/lerobot-VAI/outputs/eval/2026-01-21/22-24-16_smolvla_10_vanilla/eval_info.json"}
+BASIS_JSON=${2:-"/data1/local/lerobot-VAI/outputs/eval/2026-01-22/13-05-07_smolvla_10_basis_concat_95000/eval_info.json"}
+OUTPUT_CSV=${3:-"libero_object_merged_eval_results.csv"}
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

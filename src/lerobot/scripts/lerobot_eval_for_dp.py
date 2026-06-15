@@ -60,6 +60,9 @@ from functools import partial
 from pathlib import Path
 from pprint import pformat
 from typing import Any, TypedDict
+import torch
+import torch.nn.functional as F
+from collections import deque
 
 import einops
 import gymnasium as gym
@@ -68,7 +71,7 @@ import torch
 from termcolor import colored
 from torch import Tensor, nn
 from tqdm import trange
-
+from torchvision import transforms
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
@@ -78,6 +81,7 @@ from lerobot.envs.utils import (
     close_envs,
     preprocess_observation,
 )
+import copy
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
@@ -91,6 +95,23 @@ from lerobot.utils.utils import (
     inside_slurm,
 )
 import LIBERO.xyg_scripts.rotate_recolor_dataset as rotate_recolor_dataset
+delta_xyz_list = [(x*0.01, y*0.01, 0.05) for x in (-24, -21, -18, -15, -12, -9, -6, -3, 0, 3, 6, 9, 12, 15) for y in (-15, -12, -9, -6, -3, 0, 3, 6, 9, 12, 15, 18, 21, 24, 27)]
+# delta_xyz_list = [(x*0.01, y*0.01, 0) for x in (-3, 0, 3, 6, 9, 12, 15) for y in (-12, -9, -6, -3)]
+# delta_xyz_list = [(x*0.01, y*0.01, 0) for x in (-3, 0, 3) for y in (2,4,5)]
+# delta_xyz_list = [(x*0.01, y*0.01, 0.05) for x in (-18, -15, -12) for y in (12, 15, 18, 21, 24, 27)]
+
+def intrinsic_image_size_calibration(intrinsic_mtx: np.array, tgt_width: float = 224, cur_width: float = 256)->np.array:
+    calib_ratio = tgt_width / cur_width
+    calibrated = intrinsic_mtx * calib_ratio
+    calibrated[2, 2] = 1.0
+    return calibrated
+
+
+def _stack_if_nonempty(frames_list):
+    # frames_list: length=t, each element shape (b, H, W, C)  (네 ep_frames와 동일 가정)
+    if frames_list is None or len(frames_list) == 0:
+        return None
+    return np.stack(frames_list, axis=1)  # (b, t, H, W, C)
 
 def rollout(
     env: gym.vector.VectorEnv,
@@ -139,21 +160,39 @@ def rollout(
     # Reset the policy and environments.
     policy.reset()
     observation, info = env.reset(seed=seeds)
-    env = rotate_recolor_dataset.change_object_transparency(env, object_name="akita_black_bowl_2_main", alpha=0.0, debug=True)
+
+    # env = rotate_recolor_dataset.change_object_transparency(env, object_name="akita_black_bowl_2_main", alpha=0.0, debug=True)
+    env, delta_xyz, abs_xyz = rotate_recolor_dataset.reposition_object(env, 'akita_black_bowl_2_main', delta_xyz=(100, 0.0, 0.03), debug=True)
+    env, delta_xyz, abs_xyz = rotate_recolor_dataset.reposition_object(env, 'akita_black_bowl_1_main', delta_xyz=delta_xyz_list[env.envs[0]._init_state_id_dp], debug=True)
+    for i in range(10):
+        observation, reward, terminated, truncated, info = env.step(np.array([[0,0,0,0,0,0,0]], dtype=np.float32))
+    env, delta_xyz, abs_xyz = rotate_recolor_dataset.reposition_object(env, 'akita_black_bowl_1_main', delta_xyz=(0.0, 0.0, 0.0), debug=True)
+
+    # Store the delta_xyz and abs_xyz for this rollout
+    rollout_delta_xyz = delta_xyz
+    rollout_abs_xyz = abs_xyz
+    env.envs[0]._init_state_id_dp += 1
     observation, reward, terminated, truncated, info = env.step(np.array([[0,0,0,0,0,0,0]], dtype=np.float32))
     if render_callback is not None:
-        render_callback(env)
-
+        ep_frames, ep_wrist_frames = render_callback(env)
     all_observations = []
     all_actions = []
     all_rewards = []
     all_successes = []
     all_dones = []
-
+    all_grippers = []
+    all_eef_poses = []
+    min_dist = 100_000
+    front_not_overlay_list = []
+    front_overlay_list = []
+    wrist_not_overlay_list = []
+    wrist_overlay_list = []
     step = 0
+    past_state_buffer = deque(maxlen=10)
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
     max_steps = env.call("_max_episode_steps")[0]
+    max_steps = 100
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
@@ -166,7 +205,6 @@ def rollout(
         observation = preprocess_observation(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
-
         # Infer "task" from attributes of environments.
         # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation, for_dp=True)
@@ -175,6 +213,53 @@ def rollout(
         observation = env_preprocessor(observation)
 
         observation = preprocessor(observation)
+        state = observation['observation.cam_info']['unnormalized_state']
+        # buffer가 비어있으면 처음 state로 padding
+        if len(past_state_buffer) == 0:
+            for _ in range(10):
+                past_state_buffer.append(state.clone())
+
+        # past_states 생성 (현재 state 제외)
+        past_states = torch.stack(list(past_state_buffer), dim=0)
+
+        # item에 저장
+        observation["past_states"] = past_states
+
+        # buffer 업데이트
+        past_state_buffer.append(state.clone())
+        if policy.config.visual_cue_mode != "vanilla":
+            with torch.inference_mode():
+                batch_viz = deepcopy(observation)
+                h = batch_viz["observation.image"].shape[2]
+                depth = batch_viz['observation.cam_info']['depth'].unsqueeze(0) # 1 * H * W
+                depth_image_512 = F.interpolate(
+                    depth,
+                    size=(512, 512),
+                    mode="bilinear",
+                    align_corners=False
+                )
+                wrist_depth = batch_viz['observation.cam_info']['wrist_depth'].unsqueeze(0)
+                wrist_depth_image_512 = F.interpolate(
+                    wrist_depth,
+                    size=(512, 512),
+                    mode="bilinear",
+                    align_corners=False
+                )
+                batch_viz['observation.cam_info']['depth'] = depth_image_512.squeeze(0)
+                batch_viz['observation.cam_info']['wrist_depth'] = wrist_depth_image_512.squeeze(0)
+                batch_viz['observation.cam_info']['intrinsic_matrix'] = intrinsic_image_size_calibration(batch_viz['observation.cam_info']['intrinsic_matrix'][0], 512, h).unsqueeze(0)
+                batch_viz['observation.cam_info']['wrist_intrinsic_matrix'] = intrinsic_image_size_calibration(batch_viz['observation.cam_info']['wrist_intrinsic_matrix'][0], 512, h).unsqueeze(0)
+                batch_viz["observation.image"] = torch.from_numpy(ep_frames[-1]).to('cuda').permute(0, 3, 1, 2) / 255.0
+                batch_viz["observation.wrist_image"] = torch.from_numpy(ep_wrist_frames[-1]).to('cuda').permute(0, 3, 1, 2) / 255.0
+                policy.eval() 
+                batch = policy._get_visual_cues(batch_viz, overlay=True)
+                front_overlay_list.append(batch["observation.image"][0:1, 3:6].to('cpu').permute(0,2,3,1))
+                wrist_overlay_list.append(batch["observation.wrist_image"][0:1, 3:6].to('cpu').permute(0,2,3,1))
+                batch = policy._get_visual_cues(batch_viz, overlay=False)
+                front_not_overlay_list.append(batch["observation.image"][0:1, 3:6].to('cpu').permute(0,2,3,1))
+                wrist_not_overlay_list.append(batch["observation.wrist_image"][0:1, 3:6].to('cpu').permute(0,2,3,1))
+        # observation.pop('observation.wrist_image')
+        # observation['observation.state'].zero_()
         with torch.inference_mode():
             action = policy.select_action(observation)
         action = postprocessor(action)
@@ -189,8 +274,12 @@ def rollout(
 
         # Apply the next action.
         observation, reward, terminated, truncated, info = env.step(action_numpy)
+        is_touching = rotate_recolor_dataset.finger_object_in_contact(env, object_name="akita_black_bowl_1_main", collision_only=True)
+        print("contact:", is_touching)
+        # print("distance: ", diction['dist'])
         if render_callback is not None:
-            render_callback(env)
+            ep_frames, ep_wrist_frames = render_callback(env)
+
 
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available if none of the envs finished.
@@ -205,6 +294,14 @@ def rollout(
         else:
             successes = [False] * env.num_envs
 
+        diction = rotate_recolor_dataset.robot_object_distance_xyz(env, 'akita_black_bowl_1_main', eef_site_name='gripper0_eef')
+        if diction['dist'] < min_dist:
+            min_dist = diction['dist']
+
+        if is_touching:
+            terminated[0] = True
+            truncated[0] = True
+            successes = [True]
         # Keep track of which environments are done so far.
         # Mark the episode as done if we reach the maximum step limit.
         # This ensures that the rollout always terminates cleanly at `max_steps`,
@@ -217,25 +314,31 @@ def rollout(
         all_rewards.append(torch.from_numpy(reward))
         all_dones.append(torch.from_numpy(done))
         all_successes.append(torch.tensor(successes))
-
+        all_eef_poses.append(state)
         step += 1
         running_success_rate = (
             einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
         )
         progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
         progbar.update()
-
     # Track the final observation.
     if return_observations:
         observation = preprocess_observation(observation)
         all_observations.append(deepcopy(observation))
-
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
     ret = {
         ACTION: torch.stack(all_actions, dim=1),
         "reward": torch.stack(all_rewards, dim=1),
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
+        "delta_xyz": rollout_delta_xyz,
+        "abs_xyz": rollout_abs_xyz,
+        "min_dist": min_dist,
+        "front_not_overlay_list": front_not_overlay_list,
+        "front_overlay_list": front_overlay_list,
+        "wrist_not_overlay_list": wrist_not_overlay_list,
+        "wrist_overlay_list": wrist_overlay_list,
+        "all_eef_poses": all_eef_poses,
     }
     if return_observations:
         stacked_observations = {}
@@ -303,20 +406,39 @@ def eval_policy(
     max_rewards = []
     all_successes = []
     all_seeds = []
+    all_delta_xyzs = []
+    all_abs_xyzs = []
+    all_min_dists = []
+    all_eef_poses = []
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
 
     # Callback for visualization.
     def render_frame(env: gym.vector.VectorEnv):
         # noqa: B023
-        if n_episodes_rendered >= max_episodes_rendered:
-            return
         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
+        if n_to_render_now < 1:
+            n_to_render_now = 1
         if isinstance(env, gym.vector.SyncVectorEnv):
-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
+            ep_frames.append(
+                np.stack([
+                    np.flipud(env.envs[i]._env.sim.render(width=512, height=512, camera_name="agentview"))
+                    for i in range(n_to_render_now)
+                ])
+            )
+            ep_wrist_frames.append(
+                np.stack([
+                    np.flipud(env.envs[i]._env.sim.render(width=512, height=512, camera_name="robot0_eye_in_hand"))
+                    for i in range(n_to_render_now)
+                ])
+            )
+            
+            # ep_frames.append(np.stack([env.envs[i]._env.sim.render(width=512, height=512, camera_name='agentview') for i in range(n_to_render_now)]))  # noqa: B023
+            # ep_wrist_frames.append(np.stack([env.envs[i]._env.sim.render(width=512, height=512, camera_name='robot0_eye_in_hand') for i in range(n_to_render_now)]))  # noqa: B023
         elif isinstance(env, gym.vector.AsyncVectorEnv):
             # Here we must render all frames and discard any we don't need.
             ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
+        return ep_frames, ep_wrist_frames
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
@@ -331,7 +453,8 @@ def eval_policy(
         # step.
         if max_episodes_rendered > 0:
             ep_frames: list[np.ndarray] = []
-
+            ep_wrist_frames: list[np.ndarray] = []
+            
         if start_seed is None:
             seeds = None
         else:
@@ -349,7 +472,10 @@ def eval_policy(
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
         )
-
+        front_not_overlay_list = rollout_data.pop("front_not_overlay_list")
+        front_overlay_list = rollout_data.pop("front_overlay_list")
+        wrist_not_overlay_list = rollout_data.pop("wrist_not_overlay_list")
+        wrist_overlay_list = rollout_data.pop("wrist_overlay_list")
         # Figure out where in each rollout sequence the first done condition was encountered (results after
         # this won't be included).
         n_steps = rollout_data["done"].shape[1]
@@ -366,6 +492,11 @@ def eval_policy(
         max_rewards.extend(batch_max_rewards.tolist())
         batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
         all_successes.extend(batch_successes.tolist())
+        for _ in range(env.num_envs):
+            all_delta_xyzs.append(rollout_data["delta_xyz"])
+            all_abs_xyzs.append(rollout_data["abs_xyz"])
+            all_min_dists.append(rollout_data["min_dist"])
+            all_eef_poses.append(rollout_data["all_eef_poses"])
         if seeds:
             all_seeds.extend(seeds)
         else:
@@ -388,18 +519,47 @@ def eval_policy(
                 assert episode_data["index"][-1] + 1 == this_episode_data["index"][0]
                 # Concatenate the episode data.
                 episode_data = {k: torch.cat([episode_data[k], this_episode_data[k]]) for k in episode_data}
-
         # Maybe render video for visualization.
         if max_episodes_rendered > 0 and len(ep_frames) > 0:
             batch_stacked_frames = np.stack(ep_frames, axis=1)  # (b, t, *)
             for stacked_frames, done_index in zip(
                 batch_stacked_frames, done_indices.flatten().tolist(), strict=False
             ):
-                if n_episodes_rendered >= max_episodes_rendered:
-                    break
+                # if n_episodes_rendered >= max_episodes_rendered:
+                #     break
 
                 videos_dir.mkdir(parents=True, exist_ok=True)
                 video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
+                video_paths.append(str(video_path))
+
+                eef_poses_dir = videos_dir / "eef_poses"
+                eef_poses_dir.mkdir(parents=True, exist_ok=True)
+                eef_pose = rollout_data["all_eef_poses"][: done_index + 1]  # 리스트 of tensors
+                eef_pose_list = [t.cpu().squeeze(0).tolist() for t in eef_pose]  # (1, 9) → (9,)로 평탄화
+                eef_path = eef_poses_dir / f"eef_episode_{n_episodes_rendered}.json"
+                with open(eef_path, "w") as f:
+                    json.dump(eef_pose_list, f)
+                thread = threading.Thread(
+                    target=write_video,
+                    args=(
+                        str(video_path),
+                        stacked_frames[: done_index + 1],  # + 1 to capture the last observation
+                        env.unwrapped.metadata["render_fps"],
+                    ),
+                )
+                thread.start()
+                threads.append(thread)
+
+        if max_episodes_rendered > 0 and len(ep_wrist_frames) > 0:
+            batch_stacked_frames = np.stack(ep_wrist_frames, axis=1)  # (b, t, *)
+            for stacked_frames, done_index in zip(
+                batch_stacked_frames, done_indices.flatten().tolist(), strict=False
+            ):
+                # if n_episodes_rendered >= max_episodes_rendered:
+                #     break
+
+                videos_dir.mkdir(parents=True, exist_ok=True)
+                video_path = videos_dir / f"eval_episode_{n_episodes_rendered}_wrist.mp4"
                 video_paths.append(str(video_path))
                 thread = threading.Thread(
                     target=write_video,
@@ -411,7 +571,50 @@ def eval_policy(
                 )
                 thread.start()
                 threads.append(thread)
+        stacked_dict = {
+            "front_not_overlay":        _stack_if_nonempty(front_not_overlay_list),
+            "front_overlay":_stack_if_nonempty(front_overlay_list),
+            "wrist_not_overlay":        _stack_if_nonempty(wrist_not_overlay_list),
+            "wrist_overlay":_stack_if_nonempty(wrist_overlay_list),
+        }
+
+        # 실제로 존재하는 stacked 중 하나를 기준으로 batch size / time 확인
+        any_stacked = next((v for v in stacked_dict.values() if v is not None), None)
+
+        if max_episodes_rendered > 0 and any_stacked is not None:
+            videos_dir.mkdir(parents=True, exist_ok=True)
+
+            b = any_stacked.shape[0]
+            done_list = done_indices.flatten().tolist()
+            fps = env.unwrapped.metadata["render_fps"]
+
+            for env_i in range(min(b, len(done_list))):
+                done_idx = int(done_list[env_i])
+                # 혹시 -1 같은 값이면 마지막 프레임까지
+                if done_idx < 0:
+                    done_idx = any_stacked.shape[1] - 1
+
+                # 같은 episode index로 4개 비디오 저장
+                for tag, batch_stacked_frames in stacked_dict.items():
+                    if batch_stacked_frames is None:
+                        continue
+
+                    frames = batch_stacked_frames[env_i][: done_idx + 1]  # (t, H, W, C)
+                    frames = np.ascontiguousarray(frames)
+
+                    video_path = videos_dir / f"eval_episode_{n_episodes_rendered}_{tag}.mp4"
+                    video_paths.append(str(video_path))
+
+                    thread = threading.Thread(
+                        target=write_video,
+                        args=(str(video_path), frames, fps),
+                    )
+                    thread.start()
+                    threads.append(thread)
+
                 n_episodes_rendered += 1
+        else:
+            n_episodes_rendered += 1
 
         progbar.set_postfix(
             {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
@@ -430,13 +633,21 @@ def eval_policy(
                 "max_reward": max_reward,
                 "success": success,
                 "seed": seed,
+                "delta_xyz": delta_xyz,
+                "abs_xyz": abs_xyz,
+                "min_dist": min_dist,
+                "eef_pose": eef_pose
             }
-            for i, (sum_reward, max_reward, success, seed) in enumerate(
+            for i, (sum_reward, max_reward, success, seed, delta_xyz, abs_xyz, min_dist, eef_pose) in enumerate(
                 zip(
                     sum_rewards[:n_episodes],
                     max_rewards[:n_episodes],
                     all_successes[:n_episodes],
                     all_seeds[:n_episodes],
+                    all_delta_xyzs[:n_episodes],
+                    all_abs_xyzs[:n_episodes],
+                    all_min_dists[:n_episodes],
+                    all_eef_poses[:n_episodes],
                     strict=True,
                 )
             )
@@ -445,6 +656,7 @@ def eval_policy(
             "avg_sum_reward": float(np.nanmean(sum_rewards[:n_episodes])),
             "avg_max_reward": float(np.nanmean(max_rewards[:n_episodes])),
             "pc_success": float(np.nanmean(all_successes[:n_episodes]) * 100),
+            "avg_min_dist": float(np.nanmean(all_min_dists[:n_episodes])),
             "eval_s": time.time() - start,
             "eval_ep_s": (time.time() - start) / n_episodes,
         },
@@ -587,9 +799,12 @@ class TaskMetrics(TypedDict):
     max_rewards: list[float]
     successes: list[bool]
     video_paths: list[str]
+    delta_xyzs: list[tuple]
+    abs_xyzs: list[tuple]
+    min_dists: list[float]
 
 
-ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths")
+ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths", "delta_xyzs", "abs_xyzs", "min_dists")
 
 
 def eval_one(
@@ -630,6 +845,9 @@ def eval_one(
         max_rewards=[ep["max_reward"] for ep in per_episode],
         successes=[ep["success"] for ep in per_episode],
         video_paths=task_result.get("video_paths", []),
+        delta_xyzs=[ep["delta_xyz"] for ep in per_episode],
+        abs_xyzs=[ep["abs_xyz"] for ep in per_episode],
+        min_dists=[ep["min_dist"] for ep in per_episode],
     )
 
 
@@ -705,6 +923,8 @@ def eval_policy_all(
 
     # Flatten envs into list of (task_group, task_id, env)
     tasks = [(tg, tid, vec) for tg, group in envs.items() for tid, vec in group.items()]
+    for i in sorted([0, 1, 3, 4, 5, 6, 7, 8, 9], reverse=True):
+        tasks.pop(i)
 
     # accumulators: track metrics at both per-group level and across all groups
     group_acc: dict[str, dict[str, list]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
@@ -729,6 +949,7 @@ def eval_policy_all(
         _append("sum_rewards", metrics.get("sum_rewards"))
         _append("max_rewards", metrics.get("max_rewards"))
         _append("successes", metrics.get("successes"))
+        _append("min_dists", metrics.get("min_dists"))
         # video_paths is list-like
         paths = metrics.get("video_paths", [])
         if paths:
@@ -783,6 +1004,7 @@ def eval_policy_all(
             "avg_sum_reward": _agg_from_list(acc["sum_rewards"]),
             "avg_max_reward": _agg_from_list(acc["max_rewards"]),
             "pc_success": _agg_from_list(acc["successes"]) * 100 if acc["successes"] else float("nan"),
+            "avg_min_dist": _agg_from_list(acc["min_dists"]),
             "n_episodes": len(acc["sum_rewards"]),
             "video_paths": list(acc["video_paths"]),
         }
@@ -792,6 +1014,7 @@ def eval_policy_all(
         "avg_sum_reward": _agg_from_list(overall["sum_rewards"]),
         "avg_max_reward": _agg_from_list(overall["max_rewards"]),
         "pc_success": _agg_from_list(overall["successes"]) * 100 if overall["successes"] else float("nan"),
+        "avg_min_dist": _agg_from_list(overall["min_dists"]),
         "n_episodes": len(overall["sum_rewards"]),
         "eval_s": time.time() - start_t,
         "eval_ep_s": (time.time() - start_t) / max(1, len(overall["sum_rewards"])),

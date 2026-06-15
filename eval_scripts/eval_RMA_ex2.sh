@@ -22,15 +22,15 @@ RENAME_MAP='{"observation.images.image": "observation.image", "observation.image
 DEBUG_ROOT="${REPO_ROOT}/outputs/eval/viewpoint_debug"
 
 POLICY_PATHS=(
-  "/data1/local/lerobot-VAI/outputs/train/2026-06-08/14-32-37_smolvla_vanilla_rma_02/checkpoints/050000/pretrained_model"
-  "/data1/local/lerobot-VAI/outputs/train/2026-06-08/14-32-44_smolvla_axisguide_rma_02/checkpoints/050000/pretrained_model"
-  "/data1/local/lerobot-VAI/outputs/train/2026-06-09/05-56-11_smolvla_kyc_rma_02/checkpoints/050000/pretrained_model"
+  # "/data1/local/lerobot-VAI/outputs/train/2026-06-08/14-32-37_smolvla_vanilla_rma_02/checkpoints/050000/pretrained_model"
+  # "/data1/local/lerobot-VAI/outputs/train/2026-06-08/14-32-44_smolvla_axisguide_rma_02/checkpoints/050000/pretrained_model"
+  "/data1/local/lerobot-VAI/outputs/train/2026-06-13/12-55-38_smolvla_kyc_rma_02_ex2/checkpoints/050000/pretrained_model"
 )
 
 POLICY_TAGS=(
-  "RMA_ex02_smolvla_vanilla_50000"
-  "RMA_ex02_smolvla_axisguide_50000"
-  "RMA_ex02_smolvla_kyc_50000"
+  # "RMA_ex02_smolvla_vanilla_50000"
+  # "RMA_ex02_smolvla_axisguide_50000"
+  "RMA_ex02_02_smolvla_kyc_50000"
 )
 
 # Format: suite task_id viewpoint_angle label
@@ -43,16 +43,16 @@ POLICY_TAGS=(
 # )
 
 EVAL_CASES=(
-  # "libero_spatial 0 0 spatial0_angle0"
-  # "libero_goal 0 15 goal0_angle15"
-  "libero_spatial 0 0 spatial0_angle0"
-  "libero_spatial 0 5 spatial0_angle5"
-  "libero_spatial 0 10 spatial0_angle10"
-  "libero_spatial 0 15 spatial0_angle15"
-  "libero_spatial 0 20 spatial0_angle20"
-  "libero_spatial 0 25 spatial0_angle25"
-  "libero_spatial 0 30 spatial0_angle30"
-  "libero_spatial 0 35 spatial0_angle35"
+  # "libero_10 0 330 libero10_0_angle330"
+  # "libero_spatial 2 345 spatial2_angle345"
+  # "libero_object 0 355 object0_angle355"
+  # "libero_object 0 350 object0_angle350"
+  # "libero_object 0 345 object0_angle345"
+  # "libero_object 0 340 object0_angle340"
+  # "libero_object 0 335 object0_angle335"
+  # "libero_object 0 330 object0_angle330"
+  # "libero_object 0 325 object0_angle325"
+  "libero_10 1 330 libero10_1_angle330"
 )
 
 run_eval() {
