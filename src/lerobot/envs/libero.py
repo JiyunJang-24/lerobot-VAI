@@ -39,7 +39,7 @@ if os.getcwd() not in sys.path:
     sys.path.append(os.getcwd())
 if not hasattr(libero_envs, "ControlEnv"):
     libero_envs.ControlEnv = ControlEnv
-import LIBERO.xyg_scripts.rotate_recolor_dataset as rotate_recolor_dataset
+import third_party.LIBERO.xyg_scripts.rotate_recolor_dataset as rotate_recolor_dataset
 from PIL import Image
 
 def _parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:

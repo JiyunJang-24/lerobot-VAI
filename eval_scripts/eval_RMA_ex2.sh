@@ -13,7 +13,7 @@ fi
 
 source ${VENV_PATH}/bin/activate
 
-export PYTHONPATH="${REPO_ROOT}/third_party:${REPO_ROOT}/third_party/LIBERO/libero:${PYTHONPATH:-}"
+export PYTHONPATH="${REPO_ROOT}/third_party/LIBERO:${PYTHONPATH:-}"
 
 # Do avoid EGL device display error
 export MUJOCO_GL=osmesa
@@ -24,13 +24,16 @@ DEBUG_ROOT="${REPO_ROOT}/outputs/eval/viewpoint_debug"
 POLICY_PATHS=(
   # "/data1/local/lerobot-VAI/outputs/train/2026-06-08/14-32-37_smolvla_vanilla_rma_02/checkpoints/050000/pretrained_model"
   # "/data1/local/lerobot-VAI/outputs/train/2026-06-08/14-32-44_smolvla_axisguide_rma_02/checkpoints/050000/pretrained_model"
-  "/data1/local/lerobot-VAI/outputs/train/2026-06-13/12-55-38_smolvla_kyc_rma_02_ex2/checkpoints/050000/pretrained_model"
+  # "/data1/local/lerobot-VAI/outputs/train/2026-06-13/12-55-38_smolvla_kyc_rma_02_ex2/checkpoints/050000/pretrained_model"
+  "/data1/local/lerobot-VAI/outputs/train/2026-06-15/12-24-55_smolvla_kyc_rma_02_ex2_plucker_encoder/checkpoints/045000/pretrained_model"
+
 )
 
 POLICY_TAGS=(
   # "RMA_ex02_smolvla_vanilla_50000"
   # "RMA_ex02_smolvla_axisguide_50000"
-  "RMA_ex02_02_smolvla_kyc_50000"
+  # "RMA_ex02_02_smolvla_kyc_50000"
+  "RMA_ex02_02_smolvla_kyc_encoder_45000"
 )
 
 # Format: suite task_id viewpoint_angle label
@@ -45,14 +48,14 @@ POLICY_TAGS=(
 EVAL_CASES=(
   # "libero_10 0 330 libero10_0_angle330"
   # "libero_spatial 2 345 spatial2_angle345"
-  # "libero_object 0 355 object0_angle355"
-  # "libero_object 0 350 object0_angle350"
-  # "libero_object 0 345 object0_angle345"
-  # "libero_object 0 340 object0_angle340"
-  # "libero_object 0 335 object0_angle335"
-  # "libero_object 0 330 object0_angle330"
-  # "libero_object 0 325 object0_angle325"
-  "libero_10 1 330 libero10_1_angle330"
+  "libero_object 0 355 object0_angle355"
+  "libero_object 0 350 object0_angle350"
+  "libero_object 0 345 object0_angle345"
+  "libero_object 0 340 object0_angle340"
+  "libero_object 0 335 object0_angle335"
+  "libero_object 0 330 object0_angle330"
+  "libero_object 0 325 object0_angle325"
+  # "libero_10 1 330 libero10_1_angle330"
 )
 
 run_eval() {
