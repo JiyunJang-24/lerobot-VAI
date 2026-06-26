@@ -1,0 +1,81 @@
+Changed convert_v21_to_v30_multiple.sh.
+
+- Added support for conda installations under /opt/conda by sourcing /opt/conda/etc/profile.d/conda.sh before running conda activate.
+- Added PYTHONPATH export so the repository's src directory is importable during conversion.
+- Kept the script behavior as requested: it discovers all v-* datasets under dataset_git/RMA_ex02_scaling and runs up to 5 conversions in parallel.
+
+Why it was failing:
+
+- `conda activate smolvla /root/Desktop/workspace/jiyun/lerobot-VAI/convert_v21_to_v30.sh` is not valid conda syntax. `conda activate` accepts only the environment name, so the script path is treated as an extra invalid argument.
+- In a non-interactive bash script, the conda executable can exist at /opt/conda/bin/conda while `conda activate smolvla` still fails unless conda.sh has been sourced first.
+- The previous multiple-conversion script checked that `conda` existed, but did not source the /opt/conda initialization script used on this machine.
+
+How to run:
+
+./convert_v21_to_v30_multiple.sh
+
+Or, if activating the environment manually first:
+
+conda activate smolvla
+./convert_v21_to_v30_multiple.sh
+
+Single-line form:
+
+conda activate smolvla && ./convert_v21_to_v30_multiple.sh
+
+Optional:
+
+MAX_JOBS=3 ./convert_v21_to_v30_multiple.sh
+
+Additional fix for convert_v21_to_v30.sh:
+
+- The 401 Hugging Face error happened because the script passed the wrong local root:
+  /root/Desktop/workspace/lerobot-VAI/dataset_git
+- The converter internally resolves the dataset path as:
+  Path(root) / repo_id
+- Because the old path did not exist on this machine, the converter did not use the local dataset and fell back to snapshot_download(repo_id, revision="v2.1").
+- That tried to download this remote dataset:
+  https://huggingface.co/datasets/v-1.000-1.000_num36
+- Since that repo does not exist or is private, Hugging Face returned 401 Unauthorized.
+
+Changed convert_v21_to_v30.sh:
+
+- Added a bash shebang and strict mode.
+- Changed the dataset root to:
+  /root/Desktop/workspace/jiyun/lerobot-VAI/dataset_git/RMA_ex02_scaling/RMA_vla_scaling_50_01_0.0_0.0
+- Kept repo_id as:
+  v-1.000-1.000_num36
+- Added a local dataset existence check before running the Python converter.
+- Changed PYTHONPATH to use the script directory instead of the hard-coded /workspace path.
+
+Changed train_smolVLA_scaling.sh:
+
+- Replaced the hard-coded 5 dataset repo_id list with automatic discovery of all datasets under:
+  /root/Desktop/workspace/jiyun/lerobot-VAI/dataset_git/RMA_ex02_scaling
+- The script now includes only directories matching:
+  */v-*
+- The script excludes conversion backup directories matching:
+  *_old
+- The script also requires each selected dataset to have:
+  meta/info.json
+- The generated dataset repo IDs are relative to dataset.root, for example:
+  RMA_vla_scaling_50_01_0.0_0.0/v-1.000-1.000_num36
+- Changed training launch from one GPU:
+  CUDA_VISIBLE_DEVICES=1 python ...
+  to multi-GPU accelerate launch using all GPUs reported by nvidia-smi by default.
+- GPU selection is handled by accelerate --gpu_ids.
+- Added GPU_IDS override support, for example:
+  GPU_IDS=0,1 bash train_smolVLA_scaling.sh
+- Increased default per-GPU batch size from 64 to 128.
+- Effective batch size is now:
+  BATCH_SIZE * number_of_GPUs
+- Added BATCH_SIZE override support, for example:
+  BATCH_SIZE=96 bash train_smolVLA_scaling.sh
+- Changed mixed precision default from fp16 to bf16 for SmolVLA training.
+- Reason: SmolVLA loads the VLM with bfloat16 weights, and fp16 mixed precision uses GradScaler. That can fail with:
+  "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'
+- bf16 mixed precision avoids fp16 GradScaler while matching the model's bfloat16 dtype.
+- Added MIXED_PRECISION override support, for example:
+  MIXED_PRECISION=no bash train_smolVLA_scaling.sh
+- Set dataset.cache_in_memory default to false because the full scaling dataset is large. It can still be enabled with:
+  CACHE_IN_MEMORY=true bash train_smolVLA_scaling.sh
