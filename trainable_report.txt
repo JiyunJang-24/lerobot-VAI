@@ -1,12 +1,12 @@
 === Trainable / Frozen Parameter Report ===
-Total params: 455,546,976
-Trainable params: 408,238,176 (89.61%)
+Total params: 450,046,176
+Trainable params: 402,737,376 (89.49%)
 Frozen params: 47,308,800
 
 === Top-level module summary ===
-- model | trainable 408,238,176 (89.61%) | frozen 47,308,800 | (param cnt: tr 508, fr 1)
+- model | trainable 402,737,376 (89.49%) | frozen 47,308,800 | (param cnt: tr 499, fr 1)
 
-=== Trainable parameters (count=508) ===
+=== Trainable parameters (count=499) ===
 model.vlm_with_expert.vlm.model.vision_model.embeddings.patch_embedding.weight	shape=(768, 3, 16, 16)	numel=589,824	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
 model.vlm_with_expert.vlm.model.vision_model.embeddings.patch_embedding.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
 model.vlm_with_expert.vlm.model.vision_model.embeddings.position_embedding.weight	shape=(1024, 768)	numel=786,432	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
@@ -351,15 +351,6 @@ model.vlm_with_expert.vlm.model.text_model.layers.15.mlp.down_proj.weight	shape=
 model.vlm_with_expert.vlm.model.text_model.layers.15.input_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
 model.vlm_with_expert.vlm.model.text_model.layers.15.post_attention_layernorm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
 model.vlm_with_expert.vlm.model.text_model.norm.weight	shape=(960,)	numel=960	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
-model.vlm_with_expert.visual_cue_encoder.0.weight	shape=(64, 6, 7, 7)	numel=18,816	requires_grad=True	dtype=torch.float32	device=cuda:0
-model.vlm_with_expert.visual_cue_encoder.3.weight	shape=(128, 64, 3, 3)	numel=73,728	requires_grad=True	dtype=torch.float32	device=cuda:0
-model.vlm_with_expert.visual_cue_encoder.6.weight	shape=(256, 128, 3, 3)	numel=294,912	requires_grad=True	dtype=torch.float32	device=cuda:0
-model.vlm_with_expert.visual_cue_encoder.9.weight	shape=(512, 256, 3, 3)	numel=1,179,648	requires_grad=True	dtype=torch.float32	device=cuda:0
-model.vlm_with_expert.visual_cue_encoder.12.weight	shape=(512, 512, 3, 3)	numel=2,359,296	requires_grad=True	dtype=torch.float32	device=cuda:0
-model.vlm_with_expert.visual_cue_out_proj.weight	shape=(768, 512, 1, 1)	numel=393,216	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
-model.vlm_with_expert.visual_cue_out_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
-model.vlm_with_expert.vision_fusion_proj.weight	shape=(768, 1536)	numel=1,179,648	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
-model.vlm_with_expert.vision_fusion_proj.bias	shape=(768,)	numel=768	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
 model.vlm_with_expert.lm_expert.layers.0.self_attn.q_proj.weight	shape=(960, 720)	numel=691,200	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
 model.vlm_with_expert.lm_expert.layers.0.self_attn.k_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0
 model.vlm_with_expert.lm_expert.layers.0.self_attn.v_proj.weight	shape=(320, 720)	numel=230,400	requires_grad=True	dtype=torch.bfloat16	device=cuda:0

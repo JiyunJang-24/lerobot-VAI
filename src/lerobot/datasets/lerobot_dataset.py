@@ -2162,7 +2162,17 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                     plucker_data = self.plucker_embedder(intrinsic_tensor, extrinsic_tensor)
                     plucker_tensor = einops.rearrange(plucker_data['plucker'], 's h w c -> s c h w')
                     item['observation.image'] = torch.cat([img, plucker_tensor], dim=1)
-
+                    try:
+                        wrist_img = item['observation.wrist_image']
+                        wrist_intrinsic_matrix = item['wrist_intrinsic_matrix']
+                        wrist_extrinsic_matrix = remove_extrinsic_camera_axis_correction(item['wrist_extrinsic_matrix'])
+                        wrist_intrinsic_tensor = wrist_intrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)
+                        wrist_extrinsic_tensor = wrist_extrinsic_matrix.unsqueeze(0).expand(img.shape[0], -1, -1)
+                        wrist_plucker_data = self.plucker_embedder(wrist_intrinsic_tensor, wrist_extrinsic_tensor)
+                        wrist_plucker_tensor = einops.rearrange(wrist_plucker_data['plucker'], 's h w c -> s c h w')
+                        item['observation.wrist_image'] = torch.cat([wrist_img, wrist_plucker_tensor], dim=1)
+                    except:
+                        pass
             elif self.visual_cue_mode == "trace":
                 with torch.no_grad():
                     past_states = item["past_states"]   # (T,D) or (B,T,D), past -> current

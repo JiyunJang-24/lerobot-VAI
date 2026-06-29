@@ -579,6 +579,19 @@ class SmolVLAPolicy(PreTrainedPolicy):
                 plucker_data = self.plucker_embedder(intrinsic_tensor, extrinsic_tensor)
                 plucker_tensor = einops.rearrange(plucker_data['plucker'], 's h w c -> s c h w')
                 item['observation.image'] = torch.cat([img, plucker_tensor], dim=1)
+                try:
+                    wrist_img = item['observation.wrist_image']
+                    wrist_intrinsic_matrix = item['observation.cam_info']['wrist_intrinsic_matrix'].to(torch.float32).squeeze(0)
+                    wrist_extrinsic_matrix = item['observation.cam_info']['wrist_extrinsic_matrix'].to(torch.float32).squeeze(0)
+                    wrist_plucker_extrinsic_matrix = remove_extrinsic_camera_axis_correction(wrist_extrinsic_matrix)
+                    wrist_intrinsic_tensor = wrist_intrinsic_matrix.unsqueeze(0).expand(wrist_img.shape[0], -1, -1).cuda()
+                    wrist_extrinsic_tensor = wrist_extrinsic_matrix.unsqueeze(0).expand(wrist_img.shape[0], -1, -1).cuda()
+                    wrist_plucker_data = self.plucker_embedder(wrist_intrinsic_tensor, wrist_extrinsic_tensor)
+                    wrist_plucker_tensor = einops.rearrange(wrist_plucker_data['plucker'], 's h w c -> s c h w')
+                    # save_rgb_image(wrist_axis_tensor[0], "tmp_dir/wrist_non_scaled_axis_tensor.png")
+                    item['observation.wrist_image'] = torch.cat([wrist_img, wrist_plucker_tensor], dim=1)
+                except:
+                    pass
         except Exception as e:
             print(e)
         return item
