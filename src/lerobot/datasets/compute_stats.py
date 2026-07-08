@@ -562,8 +562,51 @@ def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
                 _validate_stat_value(stat_value, stat_key, feature_key)
 
 
+def _pad_stat_values_to_common_shape(stats_ft_list: list[dict[str, dict]]) -> list[dict[str, dict]]:
+    """Pad feature stats when datasets use the same feature with different last-dim widths.
+
+    MultiLeRobotDataset pads sample tensors on the last axis for compatible shape mismatches
+    such as robot state vectors with different DOF. The aggregated normalization stats must
+    follow the same shape so preprocessors can normalize padded samples.
+    """
+    value_keys = [key for key in stats_ft_list[0] if key != "count"]
+    shapes = {tuple(stats[key].shape) for stats in stats_ft_list for key in value_keys if key in stats}
+
+    if len(shapes) <= 1:
+        return stats_ft_list
+
+    ranks = {len(shape) for shape in shapes}
+    prefixes = {shape[:-1] for shape in shapes}
+
+    if len(ranks) != 1 or len(prefixes) != 1:
+        raise ValueError(f"Cannot aggregate stats with incompatible shapes: {sorted(shapes)}")
+
+    target_shape = (*next(iter(prefixes)), max(shape[-1] for shape in shapes))
+    padded_stats = []
+
+    for stats in stats_ft_list:
+        padded = dict(stats)
+        for key in value_keys:
+            if key not in padded or padded[key].shape == target_shape:
+                continue
+
+            if padded[key].shape[:-1] != target_shape[:-1]:
+                raise ValueError(
+                    f"Cannot pad stat '{key}' from shape {padded[key].shape} to {target_shape}."
+                )
+
+            pad_width = [(0, 0)] * padded[key].ndim
+            pad_width[-1] = (0, target_shape[-1] - padded[key].shape[-1])
+            padded[key] = np.pad(padded[key], pad_width, mode="constant", constant_values=0)
+        padded_stats.append(padded)
+
+    return padded_stats
+
+
 def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
     """Aggregates stats for a single feature."""
+    stats_ft_list = _pad_stat_values_to_common_shape(stats_ft_list)
+
     means = np.stack([s["mean"] for s in stats_ft_list])
     variances = np.stack([s["std"] ** 2 for s in stats_ft_list])
     counts = np.stack([s["count"] for s in stats_ft_list])

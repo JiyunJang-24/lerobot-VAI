@@ -79,3 +79,42 @@ Changed train_smolVLA_scaling.sh:
   MIXED_PRECISION=no bash train_smolVLA_scaling.sh
 - Set dataset.cache_in_memory default to false because the full scaling dataset is large. It can still be enabled with:
   CACHE_IN_MEMORY=true bash train_smolVLA_scaling.sh
+
+Changed train_smolVLA.sh:
+
+- Added automatic conda environment activation for the smolvla environment.
+- The script now sources conda initialization from these locations when needed:
+  CONDA_EXE-derived path, /opt/conda, ~/miniconda3, ~/anaconda3
+- This lets the training script run as:
+  bash train_smolVLA.sh
+- The command below is still invalid conda syntax and fails before the script can run:
+  conda activate smolvla train_smolVLA.sh
+- Correct two-command form:
+  conda activate smolvla
+  bash train_smolVLA.sh
+- Correct one-line form:
+  conda activate smolvla && bash train_smolVLA.sh
+- Since train_smolVLA.sh now activates smolvla itself, the simplest command is:
+  bash train_smolVLA.sh
+- Verified that all 8 visual_robust_ex01 dataset repo IDs used by train_smolVLA.sh load with LeRobotDatasetMetadata.
+- All 8 selected datasets report codebase_version v3.0.
+
+Additional train_smolVLA.sh runtime fix:
+
+- Ran bash train_smolVLA.sh and reproduced the multi-dataset aggregation failure:
+  ValueError: all input arrays must have the same shape
+- Root cause: visual_robust_ex01 combines robots with different vector widths, especially observation.state and observation.environment_state.
+- MultiLeRobotDataset already pads actual samples on the last axis, but aggregate_stats did not pad stats before stacking.
+- Changed src/lerobot/datasets/compute_stats.py so aggregate_feature_stats pads stat arrays to a common last-dim width when only the last dimension differs.
+- Re-ran training and confirmed dataset aggregation now passes and training reaches "Start offline training".
+- The next failure happened in DataLoader worker collate:
+  RuntimeError: Trying to resize storage that is not resizable
+- Root cause: worker shared-memory collation can fail on sequence tensors returned by this dataset/video pipeline.
+- Changed train_smolVLA.sh num_workers from 16 to 0 to use main-process collation and avoid the worker shared-memory path.
+- Re-ran training and hit one more collation mismatch:
+  RuntimeError: stack expects each tensor to be equal size, but got [11, 15] and [11, 9]
+- Root cause: observation.state was padded across robot embodiments, but the derived sequence feature past_states was not padded.
+- Changed src/lerobot/datasets/lerobot_dataset.py so past_states is padded to the same last-dim target as observation.state.
+- Re-ran bash train_smolVLA.sh after the fixes.
+- Confirmed training reached the offline training loop and completed 5 train iterations.
+- Stopped that debug run manually with Ctrl-C after confirming the training loop was running.

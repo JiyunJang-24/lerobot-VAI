@@ -2077,6 +2077,20 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             x_pad = F.pad(x, (0, pad_amount), mode="constant", value=0)
             item[k] = x_pad
 
+        if "past_states" in item and "observation.state" in self.pad_specs:
+            x = item["past_states"]
+            if isinstance(x, torch.Tensor):
+                target = self.pad_specs["observation.state"]["target"]
+                cur = x.shape[-1]
+                if cur > target:
+                    raise ValueError(
+                        f"Padding spec target smaller than current for key=past_states: cur={cur} target={target}"
+                    )
+                if cur < target:
+                    import torch.nn.functional as F
+
+                    item["past_states"] = F.pad(x, (0, target - cur), mode="constant", value=0)
+
         return item
 
     def _get_visual_cues(self, item):
