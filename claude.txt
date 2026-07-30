@@ -893,3 +893,199 @@ atomic 하위엔 TurnOnSinkFaucet 하나뿐, composite 폴더는 비어 있음.
      진행상황 확인 가능. save_freq=5000이라 5,000 스텝마다
      체크포인트가 outputs/train/2026-07-29/19-4x-xx_smolvla_.../ 아래
      저장됨.
+
+====================================================================
+12. GPU 4-7 제한 재검증 + cross-embodiment(IIWA/UR5e) 포함한 새
+    학습 스크립트(train_smolVLA_robocasa_x.sh) 작성/실행 (2026-07-30)
+====================================================================
+
+--------------------------------------------------------------------
+12.1 사용자 요청 (원문 요지)
+--------------------------------------------------------------------
+- "train_smolVLA_robocasa.sh 이걸 돌리면 이 쉘에서 진행하는대로 학습이
+  돌아가는지 일단 확인해줘. GPU는 4,5,6,7번 GPU만 사용해야해."
+- 확인되면: cross_embodiment/lerobot_datasets 의 IIWA + UR5e 데이터셋
+  전체와, v1.0/pretrain/atomic 의 "lerobot"(human, Panda, 전부 사용) +
+  "mg"(MimicGen, 일부만 사용, human+mg 합계 1000개) 를 합쳐서 학습하는
+  새 쉘 train_smolVLA_robocasa_x.sh 를 만들고 실제로 돌려서 확인할 것.
+- 작업 내용은 항상 claude.txt에 기록, 새 패키지 설치 시 setup.sh에도
+  반영할 것.
+
+--------------------------------------------------------------------
+12.2 환경이 이전 세션과 달라져 있음을 발견
+--------------------------------------------------------------------
+- 이 세션의 lerobot-VAI 리포(git 이력·소스 코드, 즉 factory.py의
+  tolerances_s 수정, lerobot_dataset.py의 environment_state pop 수정,
+  tools/ 밑 스크립트들)는 11절까지의 결과가 전부 그대로 남아 있었음.
+- 반면 리포 안의 `dataset_git/`(subset 캐시)과 `lerobot/outputs/train/`,
+  tmux 세션 "smolvla" 는 전부 없어져 있었음(컨테이너/세션 재시작으로
+  추정) -- 즉 11절에서 tmux에 올려뒀던 3000ep 실전 학습은 이 세션
+  기준으로는 더 이상 존재하지 않음. 처음부터 다시 데이터 prep이 필요한
+  상태.
+- `/root/Desktop/workspace/jiyun/robocasa/datasets`(리포 밖, 별도 마운트)
+  는 그대로 유지되어 있었음: TurnOnSinkFaucet human/mg, IIWA, UR5e 등
+  5개 데이터셋 전부 codebase_version="v3.0"으로 이미 변환된 상태 그대로
+  (9절/10절/11절에서 in-place로 적용한 v2.0->v3.0 변환, frame_index
+  추가, mg의 timestamp/next.reward float32 캐스팅까지 전부 보존됨).
+  즉 convert_robocasa_to_v30.sh를 다시 돌릴 필요는 없었음.
+- nvidia-smi로 GPU 상태 확인: GPU 0-3은 33~46GB가 이미 사용 중(사용률은
+  0%로 유휴 상태 -- 아마 다른 프로세스가 점유한 채 idle이거나 orphaned
+  메모리, 이 컨테이너의 ps로는 소유 프로세스가 안 보임 -- 다른 세션/
+  사용자 작업으로 추정, 손대지 않음). GPU 4-7은 완전히 비어 있어서
+  (0MiB, 0%) 사용자가 지정한 "GPU 4,5,6,7만 사용" 요청과 실제로 딱 맞는
+  상태였음.
+
+--------------------------------------------------------------------
+12.3 train_smolVLA_robocasa.sh 1차 검증에서 발견한 버그: wandb 로그인
+--------------------------------------------------------------------
+- dataset_git가 없어서 데이터 prep부터 다시 실행됨(TOTAL_EPISODES=207
+  = human 107 전부 + mg 100, BATCH_SIZE=8, GPU_IDS=4,5,6,7 로 축소
+  실행). Prep 자체는 정상 완료.
+- 그런데 accelerate launch 진입 후 학습 시작 직전에 크래시:
+  `wandb.errors.errors.UsageError: No API key configured. Use
+  \`wandb login\` to log in.` 이 환경엔 wandb 로그인이 안 되어 있음
+  (~/.netrc 없음, WANDB_API_KEY 없음). GPU 제한과는 무관한, 이
+  환경(컨테이너)의 wandb 자격 증명 부재 문제.
+- WANDB_MODE=offline 환경변수를 그냥 export 해봤지만 무시됨 -> 원인
+  확인: src/lerobot/rl/wandb_utils.py::WandBLogger.__init__ 이
+  `mode=self.cfg.wandb.mode if ... else "online"` 로 wandb.init()에
+  mode를 명시적으로 넘기고 있어서, 환경변수 WANDB_MODE는 이 명시적
+  kwarg에 항상 덮어써짐(코드 자체의 설계 -- 버그는 아님, 다만 CLI로
+  이 값을 넘기는 옵션이 두 학습 스크립트 어디에도 없었음).
+- 해결: train_smolVLA_robocasa.sh와 (신규) train_smolVLA_robocasa_x.sh
+  둘 다에 `WANDB_MODE="${WANDB_MODE:-online}"` 변수를 추가하고
+  `--wandb.mode="${WANDB_MODE}"` 를 accelerate launch 커맨드에 추가.
+  기본값은 "online"이라 기존 동작(실 GPU 머신에서 wandb 자격증명이
+  있는 경우의 정상 로깅)은 그대로 유지되고, 이 검증 환경처럼 자격증명이
+  없는 곳에서는 `WANDB_MODE=offline`으로 스모크 테스트만 돌릴 수 있게
+  됨(오프라인 로그는 run 출력 디렉토리 밑에 로컬로만 저장, 업로드 없음).
+
+--------------------------------------------------------------------
+12.4 train_smolVLA_robocasa.sh 최종 검증 결과 (GPU 4,5,6,7)
+--------------------------------------------------------------------
+- `TOTAL_EPISODES=207 BATCH_SIZE=8 GPU_IDS=4,5,6,7 WANDB_MODE=offline
+  ./train_smolVLA_robocasa.sh` 재실행 (데이터는 이미 prep되어 있어
+  스킵) -> accelerate 4-GPU 기동 -> SmolVLM2-500M-Video-Instruct 로드
+  -> "Start offline training on a fixed dataset, effective batch size:
+  32" -> 267 스텝까지 에러 없이 정상 진행(가속 붙으며 최종 ~2 it/s
+  안정화).
+- nvidia-smi로 실측: GPU 4,5,6,7만 사용 중(각 ~11.4GB, 사용률
+  52~100%), GPU 0-3은 학습 시작 전과 동일하게 변화 없음(건드리지 않음
+  확인됨). 즉 "GPU 4,5,6,7만 사용" 요구사항이 실제로 지켜짐을 확인.
+- 확인 목적의 스모크 테스트였으므로 SIGKILL로 프로세스 종료(pkill -9 -f
+  lerobot_train.py / accelerate launch), GPU 메모리 정상 반환 확인.
+
+--------------------------------------------------------------------
+12.5 새 데이터 소스 스키마 사전 점검
+--------------------------------------------------------------------
+- 학습에 새로 추가할 4개 소스(atomic human, atomic mg, IIWA, UR5e)의
+  meta/info.json을 전부 비교: action(float64[12]),
+  observation.state(float64[16]), timestamp/next.reward(둘 다
+  float32[1]), 3개 카메라(video[256,256,3]) 등 모든 feature의
+  dtype/shape가 4개 데이터셋 전부 완전히 동일함을 확인 (9절/10절에서
+  mg에 적용했던 float32 캐스팅과 frame_index 추가가 이미 영구
+  반영되어 있어서, cross-embodiment 데이터를 추가로 합쳐도 새로운
+  dtype 불일치가 없음).
+
+--------------------------------------------------------------------
+12.6 새로 만든 파일
+--------------------------------------------------------------------
+- tools/prepare_robocasa_x_dataset.py (신규)
+    - tools/prepare_robocasa_dataset.py의 build_subset()과 동일한
+      로직(단일 소스씩만 다루는 dataset_tools.split_dataset/
+      remove_feature 사용, 크로스 데이터셋 병합 없음)을 4개 소스로
+      확장:
+        - panda_human: 항상 전체 유지 (--source-panda-human)
+        - panda_mg: panda_human과 합쳐서 --panda-total-episodes(기본
+          1000)가 되도록 앞에서부터 필요한 개수만 (--source-panda-mg)
+        - iiwa: 항상 전체 유지 (--source-iiwa)
+        - ur5e: 항상 전체 유지 (--source-ur5e)
+      각 소스는 --cameras로 지정한 카메라만 남김(기본: 기존 스크립트와
+      동일하게 robot0_agentview_right + robot0_eye_in_hand, left 드롭).
+      결과는 <output-root>/raw/{panda_human,panda_mg,iiwa,ur5e} 로
+      독립적으로 저장(merge 없음, 학습 시 MultiLeRobotDataset의
+      브래킷 문법으로 실시간으로만 섞음 -- 9절/10절과 동일한 이유로
+      물리적 merge를 피함).
+      소스 경로 기본값은 실제 확인된 5개 데이터셋 경로로 하드코딩
+      (IIWA/UR5e는 cross_embodiment/lerobot_datasets 아래 유일한
+      TurnOnSinkFaucet 태스크 경로; PandaOmron_RethinkGripper/
+      PickPlaceSinkToCounter는 사용자가 "IIWA와 UR5e"만 명시했고
+      태스크도 다르므로 제외).
+      idempotent(이미 원하는 개수로 존재하면 스킵), --force로 재빌드
+      가능 -- prepare_robocasa_dataset.py와 동일한 관례.
+
+- train_smolVLA_robocasa_x.sh (신규)
+    - train_smolVLA_robocasa.sh와 동일한 구조(데이터 prep 호출 ->
+      accelerate multi-GPU launch)를 그대로 따르되, prepare_robocasa_x_
+      dataset.py를 호출하고 `--dataset.repo_id=
+      "[panda_human,panda_mg,iiwa,ur5e]"` 로 4개 데이터셋을 함께 학습.
+    - PANDA_TOTAL_EPISODES(기본 1000), SOURCE_PANDA_HUMAN/
+      SOURCE_PANDA_MG/SOURCE_IIWA/SOURCE_UR5E, CAMERAS, DATASET_ROOT
+      (기본 dataset_git/robocasa_x), GPU_IDS, BATCH_SIZE 등 전부
+      기존 스크립트와 동일한 방식으로 환경변수 오버라이드 가능.
+    - wandb project는 별도로 "robocasa_x_smolvla" 사용(기존
+      "robocasa_turnonsinkfaucet_smolvla"와 구분).
+    - job_name="smolvla_robocasa_x_${PANDA_TOTAL_EPISODES}".
+
+- train_smolVLA_robocasa.sh (수정)
+    - WANDB_MODE 변수 + --wandb.mode 플래그만 추가(12.3 참고). 다른
+      로직은 변경 없음.
+
+- src/lerobot/datasets/factory.py, src/lerobot/datasets/lerobot_
+  dataset.py, convert_robocasa_to_v30.sh, tools/prepare_robocasa_
+  dataset.py, tools/ensure_frame_index.py, tools/fix_episode_file_
+  index.py: 이번 세션에서 변경 없음(9~11절에서 이미 완료된 상태 그대로
+  재사용).
+
+--------------------------------------------------------------------
+12.7 train_smolVLA_robocasa_x.sh 최종 검증 결과 (GPU 4,5,6,7)
+--------------------------------------------------------------------
+- `BATCH_SIZE=8 GPU_IDS=4,5,6,7 WANDB_MODE=offline
+  ./train_smolVLA_robocasa_x.sh` 를 기본값(PANDA_TOTAL_EPISODES=1000)
+  그대로 실제로 실행.
+- 데이터 prep 결과: panda_human=107(그대로 복사, 재인코딩 없음) +
+  panda_mg=893(9524개 중 앞쪽 893개, split_dataset 경유 -- 유일하게
+  비디오 재인코딩이 필요했던 부분, 데이터 prep 전체 시간의 대부분을
+  차지) + iiwa=990(전체, max_episodes=None이라 split 없이 순수 카메라
+  드롭 복사만 -> 빠름) + ur5e=997(전체, 마찬가지로 빠름)
+  = 총 2,987 에피소드. 107+893=1000 (Panda 목표 정확히 달성).
+- 학습 시작 로그에서 `keys set() of {panda_human,panda_mg,iiwa,ur5e}
+  were disabled` (전부 빈 집합) 확인 -- 12.5에서 확인한 대로 4개
+  데이터셋의 feature 스키마가 완전히 동일해서 MultiLeRobotDataset이
+  아무 필드도 걸러내지 않고 전부 사용함을 실측으로도 확인.
+- "Start offline training on a fixed dataset, effective batch size:
+  32" 이후 252 스텝까지 에러 없이 정상 진행.
+- nvidia-smi 실측: GPU 4,5,6,7만 사용(각 ~11.4GB, 사용률 75~86%),
+  GPU 0-3 변화 없음.
+- 확인 목적이므로 SIGKILL로 종료, GPU 메모리 정상 반환 확인. 데이터는
+  dataset_git/robocasa_x/raw/ 에 그대로 남아있어(2,987 에피소드 전체
+  이미 준비 완료 상태) 다음에 그냥 ./train_smolVLA_robocasa_x.sh 를
+  실행하면 데이터 prep 없이 바로 학습이 시작됨.
+
+--------------------------------------------------------------------
+12.8 패키지 설치 여부
+--------------------------------------------------------------------
+- 이번 세션에서 pip install 등 새 패키지 설치는 전혀 하지 않음(기존
+  smolvla conda env를 그대로 사용). setup.sh 변경 없음.
+
+--------------------------------------------------------------------
+12.9 남은 것 / 참고
+--------------------------------------------------------------------
+- 두 스크립트 모두 "동작 확인"만 했고(짧은 스텝 수, 작은 배치),
+  100,000 스텝까지 가는 실전 학습은 아직 아무것도 tmux 등에 올려두지
+  않음 -- 필요하면 11.4절과 동일한 방식(tmux new -s ... 안에서
+  BATCH_SIZE는 GPU 메모리에 맞게 다시 이진 탐색 필요, GPU_IDS=4,5,6,7
+  고정)으로 실제 실행하면 됨. 이번엔 BATCH_SIZE=8만 검증했고 11.1절의
+  48(RTX A6000 48GB, human+mg 2대만 학습 기준)은 데이터셋 구성이
+  달라졌으니(4개 소스, 2,987 에피소드) 그대로 재사용하지 말고 다시
+  탐색 권장.
+- GPU 0-3을 점유 중인 프로세스의 정체(다른 세션/사용자 작업으로 추정)
+  는 확인하지 않았고 건드리지 않음 -- 필요하면 별도로 확인 요망.
+- WANDB_MODE 기본값은 "online"으로 유지했으므로, 실 GPU 머신에서
+  wandb 자격증명이 이미 설정돼 있다면(이전 3000ep 실전 학습 때처럼)
+  기존과 동일하게 온라인 로깅됨 -- 이번 수정이 실 서비스 동작을 바꾸지
+  않음.
+- cross_embodiment/lerobot_datasets 안의 PandaOmron_RethinkGripper/
+  PickPlaceSinkToCounter(999 에피소드)는 이번 요청에 포함되지 않아
+  train_smolVLA_robocasa_x.sh에 넣지 않았음 -- 필요시 같은 패턴으로
+  추가 가능.
