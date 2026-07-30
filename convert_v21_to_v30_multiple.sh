@@ -3,7 +3,7 @@
 set -u -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATASET_BASE="${DATASET_BASE:-${SCRIPT_DIR}/dataset_git/visual_robust_ex01}"
+DATASET_BASE="${DATASET_BASE:-${SCRIPT_DIR}/dataset_git/visual_robust_ex03}"
 MAX_JOBS="${MAX_JOBS:-5}"
 CONDA_ENV="${CONDA_ENV:-smolvla}"
 PUSH_TO_HUB="${PUSH_TO_HUB:-false}"

@@ -1725,7 +1725,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # with multiple robots of different ranges. Instead we should have one normalization
         # per robot.
         for dataset in self._datasets:
-            dataset.meta.stats.pop('observation.environment_state')
+            dataset.meta.stats.pop('observation.environment_state', None)
         self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
         self.visual_cue_mode = visual_cue_mode
         if self.visual_cue_mode == "plucker_concat" or self.visual_cue_mode == "plucker":
@@ -2094,6 +2094,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return item
 
     def _get_visual_cues(self, item):
+        if self.visual_cue_mode == "vanilla":
+            return item
+
         try:
             extrinsic_matrix = item['extrinsic_matrix']
             extrinsic_matrix = remove_extrinsic_camera_axis_correction(extrinsic_matrix)

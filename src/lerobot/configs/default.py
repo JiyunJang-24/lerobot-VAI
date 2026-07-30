@@ -38,6 +38,27 @@ class DatasetConfig:
     cache_in_memory: bool = False
     use_wrist_cam: bool = True
     use_state: bool = True
+    visual_robust_repo_id: str | None = None
+    visual_robust_root: str | None = None
+    visual_robust_contrastive_weight: float = 0.0
+    visual_robust_temperature: float = 0.1
+    visual_robust_max_views: int | None = None
+    visual_robust_wrist_alignment_weight: float = 0.0
+    visual_robust_wrist_alignment_mode: str = "all"
+    visual_robust_wrist_alignment_max_views: int | None = None
+    visual_robust_wrist_width_bin_size: float = 0.01
+    visual_robust_wrist_width_temperature: float = 0.1
+    visual_robust_wrist_width_min: float = 0.0
+    visual_robust_wrist_width_max: float = 0.08
+    visual_robust_wrist_width_sigma: float = 0.2
+    visual_robust_wrist_width_state_key: str = "observation.state"
+    visual_robust_wrist_width_left_index: int = 0
+    visual_robust_wrist_width_right_index: int = 1
+    visual_robust_encoder_chunk_size: int = 32
+    visual_robust_batch_size: int | None = None
+    visual_robust_num_workers: int = 0
+    visual_robust_cache_in_memory: bool = True
+    visual_robust_same_episode_negatives: bool = True
 
 @dataclass
 class WandBConfig:

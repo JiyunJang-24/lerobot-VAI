@@ -118,3 +118,465 @@ Additional train_smolVLA.sh runtime fix:
 - Re-ran bash train_smolVLA.sh after the fixes.
 - Confirmed training reached the offline training loop and completed 5 train iterations.
 - Stopped that debug run manually with Ctrl-C after confirming the training loop was running.
+
+Changed train_smolVLA_visual_robust.sh and lerobot_train_with_visual_robust.py:
+
+- Added joint SmolVLA behavior-cloning training plus visual-encoder contrastive learning.
+- train_smolVLA_visual_robust.sh now trains on visual_robust_ex02:
+  /root/Desktop/workspace/jiyun/lerobot-VAI/dataset_git/visual_robust_ex02
+- Included all 9 non-old v3 datasets under visual_robust_ex02.
+- The visual_robust_ex02 samples contain multiple robot embodiment images for the same step.
+- Contrastive positive pairs are all selected observation.image views from the same batch row / same step.
+- Contrastive negative pairs are image views from different batch rows / different steps.
+- The contrastive feature is taken from SmolVLA's VLM visual encoder last_hidden_state, mean-pooled over visual tokens.
+- Added supervised contrastive loss and add it to the normal SmolVLA loss:
+  total_loss = vla_loss + VISUAL_ROBUST_CONTRASTIVE_WEIGHT * contrastive_loss
+- Added environment variable controls:
+  VISUAL_ROBUST_CONTRASTIVE_WEIGHT, default 0.1
+  VISUAL_ROBUST_TEMPERATURE, default 0.1
+  VISUAL_ROBUST_MAX_VIEWS, default 3
+  VISUAL_ROBUST_ENCODER_CHUNK_SIZE, default 32
+  BATCH_SIZE, default 48
+- Kept extra observation.image.* robot-view keys out of the VLA policy input metadata so normal SmolVLA action learning does not treat every contrastive view as an action-policy camera.
+- The extra observation.image.* keys remain in the actual batch and are used only for the contrastive loss.
+- Set train_smolVLA_visual_robust.sh to allow CUDA_VISIBLE_DEVICES override.
+- Set num_workers=0 for the visual robust script to avoid known multi-image DataLoader worker shared-memory collation problems.
+- Changed MultiLeRobotDataset visual cue generation to return immediately in vanilla mode, preventing repeated extrinsic_matrix warnings for datasets that do not provide the old visual-cue camera keys.
+
+Validation:
+
+- Ran bash -n train_smolVLA_visual_robust.sh successfully.
+- Ran python -m py_compile on lerobot_train_with_visual_robust.py and lerobot_dataset.py successfully.
+- Ran a small debug training job with:
+  CUDA_VISIBLE_DEVICES=1 BATCH_SIZE=4 VISUAL_ROBUST_MAX_VIEWS=3 VISUAL_ROBUST_ENCODER_CHUNK_SIZE=8 bash train_smolVLA_visual_robust.sh
+- Confirmed dataset aggregation passed, 20 visual_robust extra feature keys were excluded from the VLA policy input, contrastive learning was enabled, and the training loop completed 9 iterations.
+- Stopped that debug run manually with Ctrl-C after confirming the joint VLA + contrastive training loop was running.
+- Note: GPU 0 had an unrelated stale process holding about 43GB, so validation was run on GPU 1.
+
+Detailed visual robust contrastive implementation notes:
+
+- Files changed for visual robust contrastive learning:
+  - train_smolVLA_visual_robust.sh
+  - src/lerobot/scripts/lerobot_train_with_visual_robust.py
+  - src/lerobot/datasets/lerobot_dataset.py
+
+- train_smolVLA_visual_robust.sh changes:
+  - Changed dataset.root to:
+    /root/Desktop/workspace/jiyun/lerobot-VAI/dataset_git/visual_robust_ex02
+  - Changed dataset.repo_id to include all 9 non-old v3 datasets under visual_robust_ex02.
+  - Added environment variables for contrastive learning:
+    VISUAL_ROBUST_CONTRASTIVE_WEIGHT
+    VISUAL_ROBUST_TEMPERATURE
+    VISUAL_ROBUST_MAX_VIEWS
+    VISUAL_ROBUST_ENCODER_CHUNK_SIZE
+    BATCH_SIZE
+  - Changed CUDA_VISIBLE_DEVICES handling so it can be overridden from the shell:
+    CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+  - Changed num_workers to 0 to avoid DataLoader worker shared-memory collation issues with multi-image samples.
+
+- Newly added train_smolVLA_visual_robust.sh arguments / environment variables:
+  - VISUAL_ROBUST_CONTRASTIVE_WEIGHT
+    - Default: 0.1
+    - Role: lambda coefficient for the auxiliary contrastive loss.
+    - Final training loss is:
+      L_total = L_vla + VISUAL_ROBUST_CONTRASTIVE_WEIGHT * L_contrastive
+    - Set to 0 to disable the contrastive loss without changing the code.
+  - VISUAL_ROBUST_TEMPERATURE
+    - Default: 0.1
+    - Role: temperature tau in the contrastive softmax.
+    - Lower values make the contrastive softmax sharper and penalize hard negatives more strongly.
+  - VISUAL_ROBUST_MAX_VIEWS
+    - Default: 3
+    - Role: maximum number of robot image views used per dataset sample for contrastive learning.
+    - This bounds memory usage because each selected view is passed through the visual encoder.
+    - Example: BATCH_SIZE=4 and VISUAL_ROBUST_MAX_VIEWS=3 creates 12 visual embeddings for contrastive loss.
+  - VISUAL_ROBUST_ENCODER_CHUNK_SIZE
+    - Default: 32
+    - Role: chunk size used when passing contrastive images through the visual encoder.
+    - It reduces peak GPU memory by encoding the flattened contrastive image views in smaller chunks.
+  - BATCH_SIZE
+    - Default: 48
+    - Role: normal SmolVLA training batch size.
+    - Also affects contrastive batch size because contrastive embeddings are built from the same batch.
+  - CUDA_VISIBLE_DEVICES
+    - Default: 0
+    - Role: selects which GPU the script uses.
+    - Example:
+      CUDA_VISIBLE_DEVICES=1 BATCH_SIZE=4 bash train_smolVLA_visual_robust.sh
+
+- src/lerobot/scripts/lerobot_train_with_visual_robust.py changes:
+  - Added _select_visual_robust_image_keys(batch, max_views).
+    - Finds contrastive image keys in the current training batch.
+    - Always includes observation.image if present.
+    - Also includes keys matching observation.image.*.
+    - Excludes wrist images by default because the implementation currently looks for observation.image and observation.image.* only.
+    - Applies VISUAL_ROBUST_MAX_VIEWS to cap the number of selected views.
+  - Added _prepare_visual_robust_images(policy, batch, image_keys).
+    - Takes selected image tensors from the batch.
+    - If images have sequence dimension, uses the last frame.
+    - Applies the same resize_with_pad preprocessing used by SmolVLA.
+    - Converts pixel range from [0, 1] to [-1, 1], matching SigLIP / SmolVLA visual encoder input.
+    - Stacks selected views into shape:
+      [batch_size, num_views, channels, height, width]
+  - Added _supervised_contrastive_loss(features, labels, temperature).
+    - L2-normalizes visual features.
+    - Computes all-pairs cosine similarities.
+    - Divides logits by VISUAL_ROBUST_TEMPERATURE.
+    - Uses labels to define positives and negatives.
+  - Added compute_visual_robust_contrastive_loss(...).
+    - Extracts SmolVLA visual encoder from:
+      unwrapped_policy.model.vlm_with_expert.get_vlm_model().vision_model
+    - Runs selected contrastive image views through the same visual encoder used by SmolVLA.
+    - Uses visual encoder last_hidden_state as the feature source.
+    - Mean-pools over visual tokens:
+      pooled_features = last_hidden_state.mean(dim=1)
+    - Builds labels so all views from the same batch row / same step share a label.
+    - Computes supervised contrastive loss.
+    - Returns contrastive loss and metrics:
+      visual_robust_contrastive_loss
+      visual_robust_num_views
+  - Modified update_policy(...).
+    - Existing SmolVLA behavior-cloning loss is still computed by policy.forward(batch).
+    - If VISUAL_ROBUST_CONTRASTIVE_WEIGHT > 0, the contrastive loss is computed from the same batch.
+    - The final loss is:
+      loss = loss + visual_robust_contrastive_weight * contrastive_loss
+    - Metrics are added to output_dict so they can be logged to wandb.
+  - Modified train(...).
+    - Reads VISUAL_ROBUST_* values from environment variables.
+    - Logs the active contrastive settings.
+    - Passes contrastive settings into update_policy(...).
+  - Modified policy metadata setup before make_policy(...).
+    - Excludes extra visual robust robot-view keys from ds_meta before constructing SmolVLA policy:
+      observation.image.*
+      observation.wrist_image.*
+      intrinsic_matrix.*
+      extrinsic_matrix.*
+    - Reason:
+      These extra keys should not become normal SmolVLA action-policy cameras.
+      They are only auxiliary views for contrastive learning.
+    - The actual batch still contains these keys, so contrastive loss can use them.
+
+- Positive pair definition:
+  - visual_robust_ex02 stores several robot embodiment images for the same step/state inside a single dataset sample.
+  - In one batch row, image keys such as:
+    observation.image
+    observation.image.panda_default
+    observation.image.ur5e_robotiq85gripper
+    observation.image.iiwa_robotiq85gripper
+    observation.image.panda_robotiq85gripper
+    observation.image.panda_rethinkgripper
+    represent the same step/state from different robot embodiments/views.
+  - All selected images from the same batch row are treated as positives.
+  - Example with BATCH_SIZE=4 and VISUAL_ROBUST_MAX_VIEWS=3:
+    row 0 view 0, row 0 view 1, row 0 view 2 are positives of each other.
+    row 1 view 0, row 1 view 1, row 1 view 2 are positives of each other.
+
+- Negative pair definition:
+  - Images from different batch rows are treated as negatives.
+  - Different batch rows correspond to different dataset steps/states.
+  - Example with BATCH_SIZE=4 and VISUAL_ROBUST_MAX_VIEWS=3:
+    any row 0 view is negative against any row 1, row 2, or row 3 view.
+
+- Label construction:
+  - If batch_size = B and num_views = V, the contrastive code creates B * V embeddings.
+  - Labels are built as:
+    labels = torch.arange(batch_size).repeat_interleave(num_views)
+  - Example for B=4 and V=3:
+    [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3]
+  - Same label means positive.
+  - Different label means negative.
+  - Self-pairs are excluded.
+
+- Contrastive feature:
+  - Each selected image is passed through SmolVLA's visual encoder.
+  - The encoder output is last_hidden_state with shape approximately:
+    [B * V, num_visual_tokens, visual_hidden_dim]
+  - The contrastive embedding is:
+    z = mean(last_hidden_state, dim=1)
+  - Then each z is L2-normalized before similarity computation.
+
+- Contrastive loss equation:
+  - Let z_i be the normalized visual feature for image i.
+  - Let y_i be its label, where all images from the same step share the same label.
+  - Similarity is cosine similarity divided by temperature:
+    s(i, j) = (z_i dot z_j) / tau
+  - tau is VISUAL_ROBUST_TEMPERATURE.
+  - Positive set for anchor i:
+    P(i) = { p | y_p = y_i and p != i }
+  - The denominator contains all non-self samples:
+    A(i) = { a | a != i }
+  - Per-anchor loss:
+    L_i = - (1 / |P(i)|) * sum_{p in P(i)} log( exp(s(i, p)) / sum_{a in A(i)} exp(s(i, a)) )
+  - Final contrastive loss:
+    L_contrastive = mean_i L_i
+  - Effect:
+    Positive pairs appear in the numerator, so the model is trained to increase their similarity.
+    Negative pairs appear in the denominator, so high similarity to negatives increases the loss.
+    Therefore same-step robot-view features are pulled together and different-step features are pushed apart.
+
+- Final joint training objective:
+  - Normal SmolVLA action prediction loss:
+    L_vla
+  - Auxiliary visual contrastive loss:
+    L_contrastive
+  - Combined objective:
+    L_total = L_vla + lambda * L_contrastive
+  - lambda is VISUAL_ROBUST_CONTRASTIVE_WEIGHT.
+
+- Memory-related implementation details:
+  - Extra robot-view images are excluded from SmolVLA policy camera metadata so VLA forward does not encode all extra views as action-policy cameras.
+  - Extra views are encoded only for the contrastive loss.
+  - VISUAL_ROBUST_MAX_VIEWS caps how many views are used per step.
+  - VISUAL_ROBUST_ENCODER_CHUNK_SIZE chunks visual encoder calls to reduce peak memory.
+  - Validation used BATCH_SIZE=4 and VISUAL_ROBUST_ENCODER_CHUNK_SIZE=8 to confirm correctness without requiring the full memory footprint.
+
+Correction: visual_robust_ex01 and visual_robust_ex02 are now used as two separate datasets:
+
+- The previous visual robust implementation incorrectly used visual_robust_ex02 as the main training dataset.
+- That was wrong because visual_robust_ex02 is the contrastive-learning dataset, not the SmolVLA action-learning dataset.
+- The corrected implementation now uses:
+  - visual_robust_ex01 for normal SmolVLA behavior-cloning / action prediction loss.
+  - visual_robust_ex02 for the auxiliary visual encoder contrastive loss.
+
+- train_smolVLA_visual_robust.sh corrected dataset usage:
+  - Main VLA action dataset:
+    --dataset.root=/root/Desktop/workspace/jiyun/lerobot-VAI/dataset_git/visual_robust_ex01
+  - Main VLA action dataset repo IDs:
+    iiwa_robotiq_50_01_0.0_0.0/v-1.000-1.000_num1
+    iiwa_robotiq_50_01_0.0_0.0/v-1.000-1.000_num2
+    panda_default_50_01_0.0_0.0/v-1.000-1.000_num1
+    panda_default_50_01_0.0_0.0/v-1.000-1.000_num2
+    panda_rethink_50_01_0.0_0.0/v-1.000-1.000_num3
+    panda_rethink_50_01_0.0_0.0/v-1.000-1.000_num9
+    ur5e_robotiq_50_01_0.0_0.0/v-1.000-1.000_num5
+    ur5e_robotiq_50_01_0.0_0.0/v-1.000-1.000_num9
+
+- Contrastive dataset is passed separately through environment variables:
+  - VISUAL_ROBUST_DATASET_ROOT
+    - Default:
+      ${SCRIPT_DIR}/dataset_git/visual_robust_ex02
+    - Role:
+      Root directory for the contrastive-only dataset.
+      This dataset is not passed to make_dataset(cfg) and is not used for SmolVLA action loss.
+  - VISUAL_ROBUST_REPO_IDS
+    - Default:
+      all 9 non-old visual_robust_ex02 repo IDs.
+    - Role:
+      Repo IDs for the contrastive-only MultiLeRobotDataset.
+  - VISUAL_ROBUST_BATCH_SIZE
+    - Default:
+      same value as BATCH_SIZE.
+    - Role:
+      Batch size for the separate contrastive dataloader.
+      It can be tuned independently from the VLA action batch size.
+  - VISUAL_ROBUST_NUM_WORKERS
+    - Default:
+      0
+    - Role:
+      Number of DataLoader workers for the separate contrastive dataloader.
+  - VISUAL_ROBUST_CACHE_IN_MEMORY
+    - Default:
+      true
+    - Role:
+      Whether the contrastive dataset should cache in memory.
+      For debugging or lower RAM usage, it can be set to false.
+
+- src/lerobot/scripts/lerobot_train_with_visual_robust.py corrected data flow:
+  - make_dataset(cfg) is used only for the main action-learning dataset from visual_robust_ex01.
+  - A new helper make_visual_robust_contrastive_loader(...) creates a separate MultiLeRobotDataset for visual_robust_ex02.
+  - The contrastive loader is created from VISUAL_ROBUST_DATASET_ROOT and VISUAL_ROBUST_REPO_IDS.
+  - The contrastive dataset uses delta_timestamps={repo_id: None}, because contrastive learning only needs per-step image views and does not need SmolVLA temporal action chunks.
+  - The main training loop now fetches two batches per step:
+    batch = next(dl_iter)
+    visual_robust_batch = next(visual_robust_iter)
+  - batch is passed through the normal SmolVLA preprocessor and used for:
+    L_vla = policy.forward(batch)
+  - visual_robust_batch is not used for action loss.
+  - visual_robust_batch is used only by compute_visual_robust_contrastive_loss(...).
+
+- Corrected final objective after dataset separation:
+  - L_vla is computed from visual_robust_ex01.
+  - L_contrastive is computed from visual_robust_ex02.
+  - Final loss remains:
+    L_total = L_vla + VISUAL_ROBUST_CONTRASTIVE_WEIGHT * L_contrastive
+
+- Corrected positive / negative pair source:
+  - Positive pairs are selected only inside visual_robust_ex02 contrastive batches.
+  - All selected robot-view images from the same visual_robust_ex02 sample / same step are positives.
+  - Images from different visual_robust_ex02 samples / different steps are negatives.
+  - visual_robust_ex01 does not define contrastive positives or negatives. It is only for action prediction.
+
+- Validation after correction:
+  - Ran python -m py_compile on lerobot_train_with_visual_robust.py successfully.
+  - Ran bash -n train_smolVLA_visual_robust.sh successfully.
+  - Ran a debug job with:
+    CUDA_VISIBLE_DEVICES=1 BATCH_SIZE=2 VISUAL_ROBUST_BATCH_SIZE=2 VISUAL_ROBUST_MAX_VIEWS=3 VISUAL_ROBUST_ENCODER_CHUNK_SIZE=4 VISUAL_ROBUST_CACHE_IN_MEMORY=false bash train_smolVLA_visual_robust.sh
+  - Confirmed the logged main dataset is visual_robust_ex01 with 47K frames and 294 episodes.
+  - Confirmed a separate visual robust contrastive dataset is created from visual_robust_ex02.
+  - Confirmed the joint training loop ran for 34 iterations.
+  - Stopped the debug job manually with Ctrl-C after confirming both datasets were being used correctly.
+
+Correction: visual robust options are now normal CLI config arguments, not Python-read environment variables:
+
+- Added the following fields to src/lerobot/configs/default.py in DatasetConfig:
+  - visual_robust_repo_id
+    - Contrastive-only repo IDs.
+    - In train_smolVLA_visual_robust.sh this points to all visual_robust_ex02 datasets.
+  - visual_robust_root
+    - Contrastive-only dataset root.
+    - In train_smolVLA_visual_robust.sh this is:
+      /root/Desktop/workspace/jiyun/lerobot-VAI/dataset_git/visual_robust_ex02
+  - visual_robust_contrastive_weight
+    - Weight lambda in:
+      L_total = L_vla + lambda * L_contrastive
+  - visual_robust_temperature
+    - Temperature tau used in the contrastive softmax:
+      s(i, j) = (z_i dot z_j) / tau
+  - visual_robust_max_views
+    - Maximum number of image views selected from each visual_robust_ex02 sample.
+    - The code first looks for observation.image, then sorted observation.image.* keys.
+    - If visual_robust_max_views=3, only the first 3 selected image views from one step are used.
+    - With contrastive batch size B and max_views=3, the contrastive loss sees B * 3 visual embeddings.
+    - This is a memory and compute cap; it does not mean max episodes, max timesteps, or max datasets.
+  - visual_robust_encoder_chunk_size
+    - Number of contrastive images encoded per visual encoder call.
+    - Smaller values reduce peak GPU memory.
+  - visual_robust_batch_size
+    - Batch size of the separate visual_robust_ex02 contrastive dataloader.
+    - If unset, the code falls back to the normal train batch_size.
+  - visual_robust_num_workers
+    - Number of workers for the contrastive dataloader.
+  - visual_robust_cache_in_memory
+    - Whether the visual_robust_ex02 contrastive dataset is cached in memory.
+
+- Updated src/lerobot/scripts/lerobot_train_with_visual_robust.py:
+  - Removed Python reads of VISUAL_ROBUST_CONTRASTIVE_WEIGHT, VISUAL_ROBUST_TEMPERATURE, VISUAL_ROBUST_MAX_VIEWS, VISUAL_ROBUST_ENCODER_CHUNK_SIZE, VISUAL_ROBUST_DATASET_ROOT, VISUAL_ROBUST_REPO_IDS, VISUAL_ROBUST_BATCH_SIZE, VISUAL_ROBUST_NUM_WORKERS, and VISUAL_ROBUST_CACHE_IN_MEMORY.
+  - The training script now reads cfg.dataset.visual_robust_* from the normal config parser.
+  - Error messages now mention --dataset.visual_robust_root and --dataset.visual_robust_repo_id.
+
+- Updated train_smolVLA_visual_robust.sh:
+  - Removed export of VISUAL_ROBUST_* variables.
+  - Added explicit CLI arguments:
+    --dataset.visual_robust_repo_id=[...visual_robust_ex02 repo ids...]
+    --dataset.visual_robust_root=/root/Desktop/workspace/jiyun/lerobot-VAI/dataset_git/visual_robust_ex02
+    --dataset.visual_robust_contrastive_weight=0.1
+    --dataset.visual_robust_temperature=0.1
+    --dataset.visual_robust_max_views=3
+    --dataset.visual_robust_encoder_chunk_size=32
+    --dataset.visual_robust_batch_size="${VISUAL_ROBUST_BATCH_SIZE}"
+    --dataset.visual_robust_num_workers=0
+    --dataset.visual_robust_cache_in_memory=true
+  - BATCH_SIZE and VISUAL_ROBUST_BATCH_SIZE may still be shell substitution values for convenience, but Python no longer reads visual robust settings from the environment.
+
+- Exact negative sampling behavior:
+  - Positives:
+    All selected image views from the same visual_robust_ex02 sample are assigned the same label.
+    That sample corresponds to one step/state, so these views are positive pairs.
+  - Negatives:
+    Every selected image view from any other sample in the same contrastive dataloader batch is a negative.
+  - The contrastive dataloader uses shuffle=True.
+    Therefore a negative can be a different timestep from the same episode or a timestep from a different episode.
+    The current code does not force negatives to come only from different episodes.
+  - visual_robust_ex01 is not used to form contrastive positives or negatives.
+    It is used only for the normal SmolVLA action prediction loss.
+
+- Validation after CLI-argument conversion:
+  - Ran python -m py_compile on:
+    src/lerobot/configs/default.py
+    src/lerobot/scripts/lerobot_train_with_visual_robust.py
+  - Ran bash -n train_smolVLA_visual_robust.sh successfully.
+  - Ran a short parser/dataset startup check with:
+    CUDA_VISIBLE_DEVICES=1 BATCH_SIZE=2 VISUAL_ROBUST_BATCH_SIZE=2 timeout 120s bash train_smolVLA_visual_robust.sh
+  - Confirmed the logged config contains:
+    dataset.visual_robust_repo_id
+    dataset.visual_robust_root
+    dataset.visual_robust_contrastive_weight=0.1
+    dataset.visual_robust_temperature=0.1
+    dataset.visual_robust_max_views=3
+    dataset.visual_robust_encoder_chunk_size=32
+    dataset.visual_robust_batch_size=2
+  - Confirmed visual_robust_ex01 is still the main action dataset.
+  - Confirmed visual_robust_ex02 contrastive dataset creation starts from the CLI-provided dataset.visual_robust_root and dataset.visual_robust_repo_id.
+  - This short check ended with timeout code 124 after 120 seconds; it was intentionally bounded and did not indicate a Python exception.
+
+Correction: visual robust negatives are now sampled from the same episode:
+
+- Previous behavior:
+  - The contrastive dataloader used shuffle=True.
+  - Negatives were any other sample in the contrastive batch.
+  - Therefore negatives could come from a different timestep in the same episode or from a different episode.
+
+- New behavior:
+  - Added SameEpisodeBatchSampler in src/lerobot/scripts/lerobot_train_with_visual_robust.py.
+  - It reads MultiLeRobotDataset.meta_episodes.
+  - For each episode, it uses that episode's dataset_from_index and dataset_to_index frame range.
+  - It builds each contrastive batch only from indices inside one episode.
+  - Therefore, for visual_robust_ex02:
+    - Positive pairs are still different robot-view images from the same sample / same timestep.
+    - Negative pairs are now selected image views from different samples / different timesteps in the same episode.
+  - Episodes shorter than visual_robust_batch_size are skipped for contrastive batching because they cannot form a full same-episode batch.
+
+- Added DatasetConfig field:
+  - visual_robust_same_episode_negatives: bool = True
+  - train_smolVLA_visual_robust.sh passes:
+    --dataset.visual_robust_same_episode_negatives=true
+
+- Added debug metrics from compute_visual_robust_contrastive_loss(...):
+  - visual_robust_episode_unique
+    - Number of unique episode_index values inside the contrastive batch.
+    - Expected value is 1.0 when same-episode negative sampling is active.
+  - visual_robust_dataset_unique
+    - Number of unique dataset_index values inside the contrastive batch.
+    - Expected value is 1.0 because a batch is made from one global episode in one underlying dataset.
+  - visual_robust_contrastive_loss
+  - visual_robust_num_views
+  - visual_robust_contrastive_weight
+
+- Console / wandb logging cleanup:
+  - Added _scalar_metrics(...).
+  - The training log now prints and sends only scalar output_dict values.
+  - Large tensors such as losses_after_forward and losses_after_rm_padding are no longer printed or sent to wandb.
+
+- train_smolVLA_visual_robust.sh debug conveniences:
+  - Added LOG_FREQ shell substitution, default 200.
+  - Added STEPS shell substitution, default 50000.
+  - These still become normal CLI args:
+    --log_freq="${LOG_FREQ}"
+    --steps="${STEPS}"
+
+- Validation after same-episode negative sampling:
+  - Ran python -m py_compile on:
+    src/lerobot/configs/default.py
+    src/lerobot/scripts/lerobot_train_with_visual_robust.py
+  - Ran bash -n train_smolVLA_visual_robust.sh successfully.
+  - Ran a 56-step debug job with:
+    CUDA_VISIBLE_DEVICES=1 BATCH_SIZE=2 VISUAL_ROBUST_BATCH_SIZE=2 LOG_FREQ=1 bash train_smolVLA_visual_robust.sh
+  - Manually stopped that run with Ctrl-C after confirming training was running.
+  - During that run, contrastive batches logged:
+    visual_robust_episode_unique=1.0
+    visual_robust_dataset_unique=1.0
+    visual_robust_num_views=3.0
+  - The contrastive loss was present alongside the VLA loss.
+    Early observed values included about 1.6357 at step 1 and about 1.5786 at step 48, but this short run is noisy and should not be treated as a final convergence claim.
+  - Ran a clean 3-step debug job with:
+    CUDA_VISIBLE_DEVICES=1 BATCH_SIZE=2 VISUAL_ROBUST_BATCH_SIZE=2 LOG_FREQ=1 STEPS=3 timeout 240s bash train_smolVLA_visual_robust.sh
+  - The 3-step run completed successfully.
+  - The logged scalar metrics were:
+    step 1:
+      loss=1.7273629903793335
+      loss_with_visual_robust=1.8909282684326172
+      visual_robust_contrastive_loss=1.6356528997421265
+      visual_robust_episode_unique=1.0
+      visual_robust_dataset_unique=1.0
+    step 2:
+      loss=2.5036368370056152
+      loss_with_visual_robust=2.663590669631958
+      visual_robust_contrastive_loss=1.5995392799377441
+      visual_robust_episode_unique=1.0
+      visual_robust_dataset_unique=1.0
+    step 3:
+      loss=1.202019214630127
+      loss_with_visual_robust=1.3660227060317993
+      visual_robust_contrastive_loss=1.6400349140167236
+      visual_robust_episode_unique=1.0
+      visual_robust_dataset_unique=1.0

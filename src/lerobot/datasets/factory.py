@@ -112,6 +112,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             episodes=episodes_dict,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
+            tolerances_s=dict.fromkeys(datasets, cfg.tolerance_s),
             video_backend=cfg.dataset.video_backend,
             visual_cue_mode=cfg.policy.visual_cue_mode,
             use_wrist_cam=cfg.dataset.use_wrist_cam,
