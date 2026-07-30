@@ -31,7 +31,7 @@ export PYTHONPATH="${SCRIPT_DIR}/src:${SCRIPT_DIR}/third_party:${SCRIPT_DIR}/thi
 ROBOCASA_TASK_ROOT="/root/Desktop/workspace/jiyun/robocasa/datasets/v1.0/pretrain/atomic/TurnOnSinkFaucet/20250819"
 SOURCE_HUMAN="${SOURCE_HUMAN:-${ROBOCASA_TASK_ROOT}/lerobot}"
 SOURCE_MG="${SOURCE_MG:-${ROBOCASA_TASK_ROOT}/mg/demo/2025-08-21-12-24-03/lerobot}"
-TOTAL_EPISODES="${TOTAL_EPISODES:-3000}"
+TOTAL_EPISODES="${TOTAL_EPISODES:-500}"
 DATASET_ROOT="${DATASET_ROOT:-${SCRIPT_DIR}/dataset_git/robocasa_turnonsinkfaucet}"
 CAMERAS="${CAMERAS:-observation.images.robot0_agentview_right observation.images.robot0_eye_in_hand}"
 # Set FORCE=true to rebuild DATASET_ROOT/raw/{human,mg} even if they already exist -- needed when
@@ -75,6 +75,7 @@ for repo_id in human mg; do
 done
 
 # --- Training ------------------------------------------------------------------------------------
+STEPS="${STEPS:-100000}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
 NUM_WORKERS="${NUM_WORKERS:-8}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-8}"
@@ -105,13 +106,9 @@ POLICY_VISUAL_CUE_MODE="${POLICY_VISUAL_CUE_MODE:-vanilla}"
 # login needed) on machines without wandb credentials configured, e.g. for a quick smoke test.
 WANDB_MODE="${WANDB_MODE:-online}"
 
-if [[ -z "${GPU_IDS:-}" ]]; then
-  if command -v nvidia-smi >/dev/null 2>&1; then
-    GPU_IDS="$(nvidia-smi --query-gpu=index --format=csv,noheader | paste -sd, -)"
-  else
-    GPU_IDS="0"
-  fi
-fi
+# Comma-separated GPU indices to train on. Defaults to 4,5,6,7 -- change this line (or override
+# with `GPU_IDS=0,1,2,3 ./train_smolVLA_robocasa.sh`) to use different GPUs.
+GPU_IDS="${GPU_IDS:-4,5,6,7}"
 NUM_GPUS="$(awk -F',' '{print NF}' <<<"${GPU_IDS}")"
 
 echo "Dataset root: ${RAW_DATASET_DIR} (repo_ids: human, mg)"
@@ -135,7 +132,7 @@ accelerate launch \
   --dataset.use_state="${USE_STATE}" \
   --policy.type="smolvla" \
   --policy.push_to_hub=false \
-  --steps=100000 \
+  --steps="${STEPS}" \
   --save_freq=5000 \
   --batch_size="${BATCH_SIZE}" \
   --wandb.enable=true \
