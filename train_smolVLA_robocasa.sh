@@ -27,15 +27,58 @@ set -u -o pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 export PYTHONPATH="${SCRIPT_DIR}/src:${SCRIPT_DIR}/third_party:${SCRIPT_DIR}/third_party/LIBERO/libero:${PYTHONPATH:-}"
 
+# --- Dataloader performance ----------------------------------------------------------------------
+# This dataset packs ~350k frames into a single mp4 per camera with a ~180-frame keyframe interval.
+# That makes random-access frame reads brutally expensive on the "pyav" backend, because
+# decode_video_frames_torchvision() (a) builds a fresh VideoReader per sample -- ~185 ms just to
+# index a file that large -- and (b) can only seek to keyframes, so it decodes ~108 frames to return
+# one. Measured 214 ms per frame => ~27 s of CPU per 64-sample batch, which starved all 8 DDP ranks
+# (one rank at a time sat at 0% GPU while the other 7 spun in the NCCL all-reduce).
+#
+# "torchcodec" seeks by frame index and reuses a cached decoder (VideoDecoderCache), so it avoids
+# both costs. It was previously unusable here because it needs ffmpeg shared libs this machine
+# doesn't have -- but PyAV ships its own ffmpeg 7 build, which is exactly the version torchcodec
+# looks for. The shim below just exposes those bundled libs under their plain sonames
+# (libavutil-<hash>.so.59.39.100 -> libavutil.so.59), so no system/conda install is needed.
+# Verified pixel-identical to the pyav path (max abs diff 0.0 over 60 random frames).
+FFMPEG_SHIM_DIR="${SCRIPT_DIR}/.ffmpeg_shim"
+if [[ ! -e "${FFMPEG_SHIM_DIR}/libavutil.so.59" ]]; then
+  AV_LIBS="$(python -c 'import av, os; print(os.path.join(os.path.dirname(os.path.dirname(av.__file__)), "av.libs"))')"
+  if [[ -d "${AV_LIBS}" ]]; then
+    mkdir -p "${FFMPEG_SHIM_DIR}"
+    for f in "${AV_LIBS}"/*.so*; do
+      b="$(basename "$f")"
+      soname="$(sed -E 's/^(lib[a-z0-9]+)-[0-9a-f]+\.so\.([0-9]+).*/\1.so.\2/' <<<"$b")"
+      [[ "${soname}" != "$b" ]] && ln -sf "$f" "${FFMPEG_SHIM_DIR}/${soname}"
+      ln -sf "$f" "${FFMPEG_SHIM_DIR}/${b}"
+    done
+    echo "Built ffmpeg shim for torchcodec at ${FFMPEG_SHIM_DIR}"
+  else
+    echo "WARNING: could not locate PyAV's bundled ffmpeg; torchcodec may fail (set VIDEO_BACKEND=pyav)" >&2
+  fi
+fi
+export LD_LIBRARY_PATH="${FFMPEG_SHIM_DIR}:${LD_LIBRARY_PATH:-}"
+
+# 8 ranks x N dataloader workers, each defaulting to 96 OpenMP threads, means thousands of threads
+# fighting over 96 cores -- it made even a torch.stack of one 256x256 frame take ~16 ms. Pinning to
+# 1 thread per worker cut the decode path from 80 ms to 18 ms per frame. All the real math is on
+# GPU, so the main processes lose nothing by this either.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
 # --- Data prep (subset only -- source datasets must already be v3.0) ---------------------------
-ROBOCASA_TASK_ROOT="/root/Desktop/workspace/jiyun/robocasa/datasets/v1.0/pretrain/atomic/TurnOnSinkFaucet/20250819"
+# Relative to SCRIPT_DIR (like DATASET_ROOT below) rather than hardcoded to one machine's home dir,
+# so this works unmodified on any server that has its own dataset_git/pretrain/... checked out.
+ROBOCASA_TASK_ROOT="${ROBOCASA_TASK_ROOT:-${SCRIPT_DIR}/dataset_git/pretrain/atomic/TurnOnSinkFaucet/20250819}"
 SOURCE_HUMAN="${SOURCE_HUMAN:-${ROBOCASA_TASK_ROOT}/lerobot}"
 SOURCE_MG="${SOURCE_MG:-${ROBOCASA_TASK_ROOT}/mg/demo/2025-08-21-12-24-03/lerobot}"
-TOTAL_EPISODES="${TOTAL_EPISODES:-500}"
+TOTAL_EPISODES="${TOTAL_EPISODES:-2000}"
 DATASET_ROOT="${DATASET_ROOT:-${SCRIPT_DIR}/dataset_git/robocasa_turnonsinkfaucet}"
 CAMERAS="${CAMERAS:-observation.images.robot0_agentview_right observation.images.robot0_eye_in_hand}"
 # Set FORCE=true to rebuild DATASET_ROOT/raw/{human,mg} even if they already exist -- needed when
 # switching TOTAL_EPISODES (e.g. a prior run built a smaller subset at this same DATASET_ROOT).
+# Defaults to false so re-running this script doesn't redo the (slow) subset+re-encode step; the
+# prep script already hard-errors if the existing subset's episode count doesn't match this run.
 FORCE="${FORCE:-false}"
 
 if [[ ! -d "${SOURCE_HUMAN}" ]]; then
@@ -75,16 +118,24 @@ for repo_id in human mg; do
 done
 
 # --- Training ------------------------------------------------------------------------------------
-STEPS="${STEPS:-100000}"
+STEPS="${STEPS:-50000}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
-NUM_WORKERS="${NUM_WORKERS:-8}"
-PREFETCH_FACTOR="${PREFETCH_FACTOR:-8}"
-CACHE_IN_MEMORY="${CACHE_IN_MEMORY:-false}"
+# 96 cores / 8 ranks = 12 cores per rank, and with OMP_NUM_THREADS=1 each worker is single-threaded,
+# so 12 workers per rank saturates the box exactly without oversubscribing it.
+NUM_WORKERS="${NUM_WORKERS:-12}"
+# 12 workers x 4 = 48 batches buffered per rank, plenty to absorb dataloader jitter. (Frames are
+# float32 by the time they're queued, ~100 MB per batch, so this is ~5 GB/rank -- keep an eye on it
+# if you raise either number.)
+PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
+# Only caches the parquet (hf_dataset), not the videos -- so this is not what fixes the dataloader
+# bottleneck. It's on because it's ~70 MB total and __getitem__ does 12 separate row lookups per
+# sample for `past_states`.
+CACHE_IN_MEMORY="${CACHE_IN_MEMORY:-true}"
 MIXED_PRECISION="${MIXED_PRECISION:-bf16}"
-# "torchcodec" (this project's default when the package is importable) needs system ffmpeg shared
-# libs (libavutil.so.*) that this machine doesn't have -- decoding fails at runtime even though the
-# python package imports fine. "pyav" bundles its own ffmpeg libs and was confirmed working here.
-VIDEO_BACKEND="${VIDEO_BACKEND:-pyav}"
+# See the "Dataloader performance" block at the top: torchcodec is ~11x faster than pyav on this
+# dataset (18 ms vs 214 ms per frame) and is made loadable by the ffmpeg shim built up there.
+# Fall back to VIDEO_BACKEND=pyav if torchcodec ever fails to load.
+VIDEO_BACKEND="${VIDEO_BACKEND:-torchcodec}"
 # Default 1e-4 is too strict for mg: dataset_tools' PyAV/SVT-AV1 re-encode of packed multi-episode
 # video files (done when an episode subset doesn't align with the source's video-file boundaries)
 # introduces ~1e-4 s of frame-timestamp drift by the end of a file, which trips the dataloader's
@@ -108,8 +159,18 @@ WANDB_MODE="${WANDB_MODE:-online}"
 
 # Comma-separated GPU indices to train on. Defaults to 4,5,6,7 -- change this line (or override
 # with `GPU_IDS=0,1,2,3 ./train_smolVLA_robocasa.sh`) to use different GPUs.
-GPU_IDS="${GPU_IDS:-4,5,6,7}"
+GPU_IDS="${GPU_IDS:-0,1,2,3,4,5,6,7}"
 NUM_GPUS="$(awk -F',' '{print NF}' <<<"${GPU_IDS}")"
+
+SAVE_FREQ="${SAVE_FREQ:-5000}"
+# By default lerobot picks its own timestamped outputs/train/<date>/<time>_<job_name> directory.
+# Set OUTPUT_DIR to pin it instead -- train_smolVLA_robocasa_sweep.sh relies on this so it knows
+# exactly which directory to prune checkpoints in. lerobot refuses to start if the directory already
+# exists (unless resuming), so it must be a fresh path.
+output_dir_flag=()
+if [[ -n "${OUTPUT_DIR:-}" ]]; then
+  output_dir_flag=(--output_dir="${OUTPUT_DIR}")
+fi
 
 echo "Dataset root: ${RAW_DATASET_DIR} (repo_ids: human, mg)"
 echo "Cameras: ${CAMERAS}"
@@ -133,8 +194,9 @@ accelerate launch \
   --policy.type="smolvla" \
   --policy.push_to_hub=false \
   --steps="${STEPS}" \
-  --save_freq=5000 \
+  --save_freq="${SAVE_FREQ}" \
   --batch_size="${BATCH_SIZE}" \
+  "${output_dir_flag[@]}" \
   --wandb.enable=true \
   --wandb.project="robocasa_turnonsinkfaucet_smolvla" \
   --wandb.disable_artifact=true \

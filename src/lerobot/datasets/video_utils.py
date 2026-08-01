@@ -16,6 +16,7 @@
 import glob
 import importlib
 import logging
+import os
 import shutil
 import tempfile
 import warnings
@@ -177,6 +178,7 @@ class VideoDecoderCache:
     def __init__(self):
         self._cache: dict[str, tuple[Any, Any]] = {}
         self._lock = Lock()
+        self._pid = os.getpid()
 
     def get_decoder(self, video_path: str):
         """Get a cached decoder or create a new one."""
@@ -188,6 +190,17 @@ class VideoDecoderCache:
         video_path = str(video_path)
 
         with self._lock:
+            if self._pid != os.getpid():
+                # This cache was populated before a fork (e.g. by the main process, which then
+                # spawned DataLoader workers). Cached decoders hold open file descriptors, and a
+                # forked child shares the *file offset* of every inherited fd with its parent and
+                # siblings -- so concurrent readers seek out from under each other and the decoder
+                # is handed spliced garbage ("Invalid NAL unit size", "Could not push packet to
+                # decoder"). Drop the inherited entries and let this process open its own.
+                # Note: deliberately not closing the handles, since the parent still owns them.
+                self._cache.clear()
+                self._pid = os.getpid()
+
             if video_path not in self._cache:
                 file_handle = fsspec.open(video_path).__enter__()
                 decoder = VideoDecoder(file_handle, seek_mode="approximate")

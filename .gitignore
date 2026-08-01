@@ -181,4 +181,8 @@ outputs/
 # Dataset folders
 dataset_git/
 
+# Machine-local ffmpeg soname shim (symlinks into the active conda env's PyAV install --
+# see train_smolVLA_robocasa.sh, rebuilt automatically per-machine)
+.ffmpeg_shim/
+
 *.csv
