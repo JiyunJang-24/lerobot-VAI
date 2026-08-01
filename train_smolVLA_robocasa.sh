@@ -119,7 +119,7 @@ done
 
 # --- Training ------------------------------------------------------------------------------------
 STEPS="${STEPS:-50000}"
-BATCH_SIZE="${BATCH_SIZE:-64}"
+BATCH_SIZE="${BATCH_SIZE:-48}"
 # 96 cores / 8 ranks = 12 cores per rank, and with OMP_NUM_THREADS=1 each worker is single-threaded,
 # so 12 workers per rank saturates the box exactly without oversubscribing it.
 NUM_WORKERS="${NUM_WORKERS:-12}"
@@ -159,7 +159,7 @@ WANDB_MODE="${WANDB_MODE:-online}"
 
 # Comma-separated GPU indices to train on. Defaults to 4,5,6,7 -- change this line (or override
 # with `GPU_IDS=0,1,2,3 ./train_smolVLA_robocasa.sh`) to use different GPUs.
-GPU_IDS="${GPU_IDS:-0,1,2,3,4,5,6,7}"
+GPU_IDS="${GPU_IDS:-0,1,2,3}"
 NUM_GPUS="$(awk -F',' '{print NF}' <<<"${GPU_IDS}")"
 
 SAVE_FREQ="${SAVE_FREQ:-5000}"

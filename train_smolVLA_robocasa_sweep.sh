@@ -28,17 +28,23 @@ set -u -o pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 cd "${SCRIPT_DIR}" || exit 1
 
-read -r -a EPISODE_COUNTS <<<"${EPISODE_COUNTS:-3000 2000 1000 500}"
-
+# read -r -a EPISODE_COUNTS <<<"${EPISODE_COUNTS:-3000 2000 1000 500}"
+read -r -a EPISODE_COUNTS <<<"${EPISODE_COUNTS:-500}"
 STEPS="${STEPS:-50000}"
 SAVE_FREQ="${SAVE_FREQ:-5000}"
 export STEPS SAVE_FREQ
 
 # Sources are the same for every size -- only the episode cap changes.
-ROBOCASA_TASK_ROOT="${SCRIPT_DIR}/dataset_git/pretrain/atomic/TurnOnSinkFaucet/20250819"
+ROBOCASA_TASK_ROOT="/root/Desktop/workspace/jiyun/robocasa/datasets/v1.0/pretrain/atomic/TurnOnSinkFaucet/20250819"
 SOURCE_HUMAN="${SOURCE_HUMAN:-${ROBOCASA_TASK_ROOT}/lerobot}"
 SOURCE_MG="${SOURCE_MG:-${ROBOCASA_TASK_ROOT}/mg/demo/2025-08-21-12-24-03/lerobot}"
 CAMERAS="${CAMERAS:-observation.images.robot0_agentview_right observation.images.robot0_eye_in_hand}"
+# Exported so phase 2's train_smolVLA_robocasa.sh (a child process) uses these sources too. Until
+# 077c222 that script hardcoded the same absolute path as above, so it happened to resolve
+# identically without the export; once its default became the portable ${SCRIPT_DIR}/dataset_git/
+# pretrain/... (which doesn't exist on this machine), the missing export turned into an instant
+# "SOURCE_HUMAN not found" exit 1 -- phase 1 was unaffected since it uses these in-process.
+export SOURCE_HUMAN SOURCE_MG CAMERAS
 
 DATASET_SWEEP_ROOT="${DATASET_SWEEP_ROOT:-${SCRIPT_DIR}/dataset_git/robocasa_sweep}"
 SWEEP_STAMP="$(date +%Y-%m-%d_%H-%M-%S)"

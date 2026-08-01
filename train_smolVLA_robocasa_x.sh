@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 
-# Trains smolVLA on a cross-embodiment mix of RoboCasa TurnOnSinkFaucet demonstrations:
+# Trains smolVLA on a cross-embodiment mix of RoboCasa TurnOnSinkFaucet demonstrations, with an
+# independently chosen episode count per robot:
 #   - panda_human: ALL Panda "human" teleop demonstrations
 #   - panda_mg:    just enough Panda "mg" (MimicGen) demonstrations so that
 #                  panda_human + panda_mg == PANDA_TOTAL_EPISODES (default 1000)
-#   - iiwa:        ALL IIWA cross-embodiment demonstrations
-#   - ur5e:        ALL UR5e cross-embodiment demonstrations
+#   - iiwa:        first IIWA_EPISODES IIWA demonstrations   (default 1000)
+#   - ur5e:        first UR5E_EPISODES UR5e demonstrations   (default 1000)
 # using only the robot0_agentview_right and robot0_eye_in_hand cameras (robot0_agentview_left is
 # dropped during data prep), same convention as train_smolVLA_robocasa.sh.
 #
@@ -23,21 +24,57 @@
 #   ./convert_robocasa_to_v30.sh   # once
 #   ./train_smolVLA_robocasa_x.sh
 # Override any of the exported vars below, e.g.:
-#   PANDA_TOTAL_EPISODES=1000 GPU_IDS=4,5,6,7 ./train_smolVLA_robocasa_x.sh
+#   PANDA_TOTAL_EPISODES=1000 IIWA_EPISODES=1000 UR5E_EPISODES=1000 ./train_smolVLA_robocasa_x.sh
 
 set -u -o pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 export PYTHONPATH="${SCRIPT_DIR}/src:${SCRIPT_DIR}/third_party:${SCRIPT_DIR}/third_party/LIBERO/libero:${PYTHONPATH:-}"
 
+# --- Dataloader performance -----------------------------------------------------------------------
+# Ported verbatim from train_smolVLA_robocasa.sh (commit 077c222) -- see that script for the full
+# writeup. Short version: these datasets pack hundreds of thousands of frames into one mp4 per
+# camera, which makes random-access reads on the "pyav" backend ~11x slower than "torchcodec"
+# (214 ms vs 18 ms per frame) and starves every DDP rank. torchcodec needs ffmpeg shared libs this
+# machine lacks, so the shim below exposes PyAV's bundled ffmpeg 7 build under its plain sonames.
+FFMPEG_SHIM_DIR="${SCRIPT_DIR}/.ffmpeg_shim"
+if [[ ! -e "${FFMPEG_SHIM_DIR}/libavutil.so.59" ]]; then
+  AV_LIBS="$(python -c 'import av, os; print(os.path.join(os.path.dirname(os.path.dirname(av.__file__)), "av.libs"))')"
+  if [[ -d "${AV_LIBS}" ]]; then
+    mkdir -p "${FFMPEG_SHIM_DIR}"
+    for f in "${AV_LIBS}"/*.so*; do
+      b="$(basename "$f")"
+      soname="$(sed -E 's/^(lib[a-z0-9]+)-[0-9a-f]+\.so\.([0-9]+).*/\1.so.\2/' <<<"$b")"
+      [[ "${soname}" != "$b" ]] && ln -sf "$f" "${FFMPEG_SHIM_DIR}/${soname}"
+      ln -sf "$f" "${FFMPEG_SHIM_DIR}/${b}"
+    done
+    echo "Built ffmpeg shim for torchcodec at ${FFMPEG_SHIM_DIR}"
+  else
+    echo "WARNING: could not locate PyAV's bundled ffmpeg; torchcodec may fail (set VIDEO_BACKEND=pyav)" >&2
+  fi
+fi
+export LD_LIBRARY_PATH="${FFMPEG_SHIM_DIR}:${LD_LIBRARY_PATH:-}"
+# Thousands of OpenMP threads fighting over the box made even a single-frame torch.stack take ~16 ms.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
 # --- Data prep (subset only -- source datasets must already be v3.0) ---------------------------
 ROBOCASA_ROOT="/root/Desktop/workspace/jiyun/robocasa/datasets"
 SOURCE_PANDA_HUMAN="${SOURCE_PANDA_HUMAN:-${ROBOCASA_ROOT}/v1.0/pretrain/atomic/TurnOnSinkFaucet/20250819/lerobot}"
 SOURCE_PANDA_MG="${SOURCE_PANDA_MG:-${ROBOCASA_ROOT}/v1.0/pretrain/atomic/TurnOnSinkFaucet/20250819/mg/demo/2025-08-21-12-24-03/lerobot}"
+# IIWA / UR5e come from the pre-converted cross_embodiment trees (already v3.0, already the same
+# robot0_agentview_right + robot0_eye_in_hand 256x256 camera pair as panda, same TurnOnSinkFaucet
+# task). The raw barx/mg trees are NOT usable here: they are HDF5, not LeRobot datasets, and carry a
+# single `agentview_rgb` at 180x320, so they would need a full mujoco/robosuite re-render first.
 SOURCE_IIWA="${SOURCE_IIWA:-${ROBOCASA_ROOT}/cross_embodiment/lerobot_datasets/IIWAOmron_Robotiq85Gripper/TurnOnSinkFaucet/2026-07-24/lerobot}"
 SOURCE_UR5E="${SOURCE_UR5E:-${ROBOCASA_ROOT}/cross_embodiment/lerobot_datasets/UR5eOmron_Robotiq85Gripper/TurnOnSinkFaucet/2026-07-24/lerobot}"
 # panda_human (kept in full) + panda_mg (however many are needed) sum to this.
 PANDA_TOTAL_EPISODES="${PANDA_TOTAL_EPISODES:-1000}"
+# How many episodes to take from each of the other two robots. These sources hold slightly under
+# 1000 usable episodes each (iiwa 990, ur5e 997 at the time of writing), so asking for 1000 just
+# takes all of them -- the prep script clamps and says so rather than failing.
+IIWA_EPISODES="${IIWA_EPISODES:-1000}"
+UR5E_EPISODES="${UR5E_EPISODES:-1000}"
 DATASET_ROOT="${DATASET_ROOT:-${SCRIPT_DIR}/dataset_git/robocasa_x}"
 CAMERAS="${CAMERAS:-observation.images.robot0_agentview_right observation.images.robot0_eye_in_hand}"
 # Set FORCE=true to rebuild DATASET_ROOT/raw/* even if it already exists -- needed when switching
@@ -67,6 +104,8 @@ python "${SCRIPT_DIR}/tools/prepare_robocasa_x_dataset.py" \
   --source-ur5e "${SOURCE_UR5E}" \
   --output-root "${DATASET_ROOT}" \
   --panda-total-episodes "${PANDA_TOTAL_EPISODES}" \
+  --iiwa-episodes "${IIWA_EPISODES}" \
+  --ur5e-episodes "${UR5E_EPISODES}" \
   --cameras ${CAMERAS} \
   "${force_flag[@]}"
 prep_status=$?
@@ -84,15 +123,18 @@ for repo_id in panda_human panda_mg iiwa ur5e; do
 done
 
 # --- Training ------------------------------------------------------------------------------------
-BATCH_SIZE="${BATCH_SIZE:-64}"
-NUM_WORKERS="${NUM_WORKERS:-8}"
-PREFETCH_FACTOR="${PREFETCH_FACTOR:-8}"
-CACHE_IN_MEMORY="${CACHE_IN_MEMORY:-false}"
+# 48 is the measured ceiling on this box's 48 GB A6000s for full smolVLA fine-tuning (52 and 56 both
+# OOM; 48 sits at ~98.7% of GPU memory and held steady over a sustained run).
+BATCH_SIZE="${BATCH_SIZE:-48}"
+NUM_WORKERS="${NUM_WORKERS:-12}"
+PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
+# Caches the parquet (hf_dataset) only, not the videos -- cheap, and __getitem__ does many row
+# lookups per sample for `past_states`.
+CACHE_IN_MEMORY="${CACHE_IN_MEMORY:-true}"
 MIXED_PRECISION="${MIXED_PRECISION:-bf16}"
-# "torchcodec" (this project's default when the package is importable) needs system ffmpeg shared
-# libs (libavutil.so.*) that this machine doesn't have -- decoding fails at runtime even though the
-# python package imports fine. "pyav" bundles its own ffmpeg libs and was confirmed working here.
-VIDEO_BACKEND="${VIDEO_BACKEND:-pyav}"
+# torchcodec is ~11x faster than pyav on these packed videos and is made loadable by the ffmpeg shim
+# built at the top of this script. Fall back to VIDEO_BACKEND=pyav if it ever fails to load.
+VIDEO_BACKEND="${VIDEO_BACKEND:-torchcodec}"
 # Default 1e-4 is too strict for mg-derived subsets: dataset_tools' PyAV/SVT-AV1 re-encode of packed
 # multi-episode video files (done when an episode subset doesn't align with the source's video-file
 # boundaries) introduces ~1e-4 s of frame-timestamp drift by the end of a file, which trips the
@@ -109,6 +151,16 @@ POLICY_VISUAL_CUE_MODE="${POLICY_VISUAL_CUE_MODE:-vanilla}"
 # environment -- set WANDB_MODE=offline (writes logs locally under the run's output dir only, no
 # login needed) on machines without wandb credentials configured, e.g. for a quick smoke test.
 WANDB_MODE="${WANDB_MODE:-online}"
+# Overridable so a smoke test can run a handful of steps (e.g. STEPS=60 SAVE_FREQ=50) instead of the
+# full schedule.
+STEPS="${STEPS:-100000}"
+SAVE_FREQ="${SAVE_FREQ:-5000}"
+# By default lerobot picks its own timestamped outputs/train/<date>/<time>_<job_name> directory; set
+# OUTPUT_DIR to pin it. lerobot refuses to start if that directory already exists (unless resuming).
+output_dir_flag=()
+if [[ -n "${OUTPUT_DIR:-}" ]]; then
+  output_dir_flag=(--output_dir="${OUTPUT_DIR}")
+fi
 
 if [[ -z "${GPU_IDS:-}" ]]; then
   if command -v nvidia-smi >/dev/null 2>&1; then
@@ -120,6 +172,7 @@ fi
 NUM_GPUS="$(awk -F',' '{print NF}' <<<"${GPU_IDS}")"
 
 echo "Dataset root: ${RAW_DATASET_DIR} (repo_ids: panda_human, panda_mg, iiwa, ur5e)"
+echo "Episodes: panda=${PANDA_TOTAL_EPISODES} iiwa=${IIWA_EPISODES} ur5e=${UR5E_EPISODES}"
 echo "Cameras: ${CAMERAS}"
 echo "GPU IDs: ${GPU_IDS} (${NUM_GPUS} process(es))"
 echo "Per-GPU batch size: ${BATCH_SIZE}"
@@ -140,9 +193,10 @@ accelerate launch \
   --dataset.use_state="${USE_STATE}" \
   --policy.type="smolvla" \
   --policy.push_to_hub=false \
-  --steps=100000 \
-  --save_freq=5000 \
+  --steps="${STEPS}" \
+  --save_freq="${SAVE_FREQ}" \
   --batch_size="${BATCH_SIZE}" \
+  "${output_dir_flag[@]}" \
   --wandb.enable=true \
   --wandb.project="robocasa_x_smolvla" \
   --wandb.disable_artifact=true \
@@ -151,7 +205,7 @@ accelerate launch \
   --num_workers="${NUM_WORKERS}" \
   --dataloader_prefetch_factor="${PREFETCH_FACTOR}" \
   --dataloader_persistent_workers=true \
-  --job_name="smolvla_robocasa_x_${PANDA_TOTAL_EPISODES}" \
+  --job_name="smolvla_robocasa_x_p${PANDA_TOTAL_EPISODES}_i${IIWA_EPISODES}_u${UR5E_EPISODES}" \
   --policy.visual_cue_mode="${POLICY_VISUAL_CUE_MODE}" \
   --policy.load_vlm_weights=true \
   --policy.freeze_vision_encoder=false \

@@ -131,6 +131,18 @@ def main() -> None:
         help="panda_human (all) + panda_mg (however many needed) should sum to this.",
     )
     parser.add_argument(
+        "--iiwa-episodes",
+        type=int,
+        default=None,
+        help="Keep only the first N iiwa episodes (default: all of them).",
+    )
+    parser.add_argument(
+        "--ur5e-episodes",
+        type=int,
+        default=None,
+        help="Keep only the first N ur5e episodes (default: all of them).",
+    )
+    parser.add_argument(
         "--cameras",
         type=str,
         nargs="+",
@@ -181,11 +193,35 @@ def main() -> None:
         force=args.force,
     )
 
+    for label, requested, source in (
+        ("--iiwa-episodes", args.iiwa_episodes, args.source_iiwa),
+        ("--ur5e-episodes", args.ur5e_episodes, args.source_ur5e),
+    ):
+        if requested is None:
+            continue
+        available = json.loads((source / "meta/info.json").read_text())["total_episodes"]
+        if requested > available:
+            # Clamp rather than fail: these sources sit just under a round 1000 (a handful of
+            # episodes drop out during conversion), and refusing to run over a ~1% shortfall would
+            # just force the caller to look up exact per-robot counts. build_subset() takes the
+            # min() itself, so this is only about saying so out loud.
+            log(f"WARNING: {label}={requested} but {source} only has {available}; using all {available}.")
+
     iiwa_episodes = build_subset(
-        args.source_iiwa, raw_dir / "iiwa", "iiwa", args.cameras, max_episodes=None, force=args.force
+        args.source_iiwa,
+        raw_dir / "iiwa",
+        "iiwa",
+        args.cameras,
+        max_episodes=args.iiwa_episodes,
+        force=args.force,
     )
     ur5e_episodes = build_subset(
-        args.source_ur5e, raw_dir / "ur5e", "ur5e", args.cameras, max_episodes=None, force=args.force
+        args.source_ur5e,
+        raw_dir / "ur5e",
+        "ur5e",
+        args.cameras,
+        max_episodes=args.ur5e_episodes,
+        force=args.force,
     )
 
     total = panda_human_episodes + panda_mg_episodes + iiwa_episodes + ur5e_episodes
