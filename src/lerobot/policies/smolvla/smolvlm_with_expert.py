@@ -73,6 +73,7 @@ class SmolVLMWithExpertModel(nn.Module):
         expert_width_multiplier: float = 0.5,
         device: str = "auto",
         visual_cue_mode: str = "none",
+        knowledge_insulation: bool = False,
     ):
         super().__init__()
         if load_vlm_weights:
@@ -136,10 +137,15 @@ class SmolVLMWithExpertModel(nn.Module):
         self.train_expert_only = train_expert_only
         self.attention_mode = attention_mode
         self.expert_hidden_size = lm_expert_config.hidden_size
+        self.knowledge_insulation = knowledge_insulation
         self.set_requires_grad()
 
     def get_vlm_model(self):
         return self.vlm.model
+
+    def lm_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """LM-head logits for already-normalized text hidden states (the VLM stream output)."""
+        return self.vlm.lm_head(hidden_states.to(dtype=self.vlm.lm_head.weight.dtype))
 
     def set_requires_grad(self):
         if self.freeze_vision_encoder:
@@ -164,6 +170,17 @@ class SmolVLMWithExpertModel(nn.Module):
             ]
             for layer in last_layers:
                 frozen_layers.append(f"text_model.model.layers.{layer}.")
+
+            if self.knowledge_insulation:
+                # `lm_head` is what the FAST token objective trains, so it must stay trainable.
+                # It was in this list only because nothing called it: an unused parameter that
+                # requires grad is what breaks DDP, and with the CE loss it is used every step.
+                #
+                # The other two entries never matched anything: the real parameter names are
+                # `model.text_model.norm.weight` and `model.text_model.layers.N.`, not
+                # `text_model.model.*`. They are left untouched so behaviour is unchanged
+                # elsewhere, but do not read them as "the last layers are frozen" — they are not.
+                frozen_layers = [k for k in frozen_layers if k != "lm_head"]
 
             for name, params in self.vlm.named_parameters():
                 if any(k in name for k in frozen_layers):
@@ -300,9 +317,47 @@ class SmolVLMWithExpertModel(nn.Module):
 
         attention_interface = self.get_attention_interface()
 
-        att_output = attention_interface(
-            attention_mask_, batch_size, head_dim, query_states, key_states, value_states
+        insulate = (
+            self.knowledge_insulation
+            and len(inputs_embeds) == 2
+            and inputs_embeds[0] is not None
+            and inputs_embeds[1] is not None
         )
+        if insulate:
+            # This layer runs prefix (VLM) and suffix (action expert) through ONE attention, so a
+            # `.detach()` on the key/value states would also cut the VLM's own internal gradient.
+            # Insulation must block action -> VLM only, so the attention is split instead:
+            #   * prefix queries attend over UNdetached prefix key/values (VLM -> VLM survives),
+            #   * suffix queries attend over DETACHED prefix key/values plus their own.
+            # The result is numerically identical to the joint attention: prefix rows can never
+            # reach suffix columns anyway (their `att_masks` cumsum is strictly smaller), so
+            # restricting the prefix block drops only already-masked entries.
+            prefix_len = inputs_embeds[0].shape[1]
+            prefix_q, suffix_q = query_states[:, :prefix_len], query_states[:, prefix_len:]
+            prefix_k, suffix_k = key_states[:, :prefix_len], key_states[:, prefix_len:]
+            prefix_v, suffix_v = value_states[:, :prefix_len], value_states[:, prefix_len:]
+
+            prefix_att_output = attention_interface(
+                attention_mask_[:, :prefix_len, :prefix_len],
+                batch_size,
+                head_dim,
+                prefix_q,
+                prefix_k,
+                prefix_v,
+            )
+            suffix_att_output = attention_interface(
+                attention_mask_[:, prefix_len:, :],
+                batch_size,
+                head_dim,
+                suffix_q,
+                torch.cat([prefix_k.detach(), suffix_k], dim=1),
+                torch.cat([prefix_v.detach(), suffix_v], dim=1),
+            )
+            att_output = torch.cat([prefix_att_output, suffix_att_output], dim=1)
+        else:
+            att_output = attention_interface(
+                attention_mask_, batch_size, head_dim, query_states, key_states, value_states
+            )
         return [att_output], past_key_values
 
     def forward_cross_attn_layer(
@@ -373,6 +428,12 @@ class SmolVLMWithExpertModel(nn.Module):
 
         # Expert
         expert_layer = model_layers[1][layer_idx]
+        if self.knowledge_insulation:
+            # Cross-attention layer: the expert reads the prefix key/values explicitly, so cutting
+            # the action -> VLM path here is exactly one detach. The VLM's own prefix attention
+            # above already used the undetached states, so nothing of VLM -> VLM is lost.
+            key_states = key_states.detach()
+            value_states = value_states.detach()
         if expert_layer is not None:
             expert_hidden_states = expert_layer.input_layernorm(inputs_embeds[1])
 

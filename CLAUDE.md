@@ -348,6 +348,8 @@ tools/prepare_robocasa_x_dataset.py      builds DATASET_ROOT/raw/* subsets (idem
 tools/prepare_visual_robust_x_dataset.py reshapes the auxiliary export
 src/lerobot/scripts/lerobot_train_with_visual_robust.py   all auxiliary losses
 src/lerobot/configs/default.py           DatasetConfig — every auxiliary knob
+src/lerobot/policies/smolvla/fast_action_tokenizer.py     FAST postfix (knowledge insulation)
+tools/smoke_test_knowledge_insulation.py knowledge-insulation checks — run before launching it
 outputs/train/<date>/<time>_<job_name>/  checkpoints + train_config.json
 outputs/logs/                            run logs
 outputs/siglip_feature_analysis/         gap figures + info.txt (read this)
@@ -357,56 +359,116 @@ tmux sessions used: `smolvla`, `smolvla_distill`, `smolvla_eef`.
 
 ---
 
-## 8. IN PROGRESS — knowledge insulation (branch `feat/knowledge-insulation`)
+## 8. Knowledge insulation (pi_0.5) — implemented, not yet run to completion
 
-Goal (π₀.₅): the flow-matching loss must not reach the VLM (stop-gradient), and the VLM is
-instead trained to predict FAST-tokenized actions with its own LM head.
+Goal: the flow-matching loss must not reach the VLM (stop-gradient), and the VLM is instead
+trained to predict FAST-tokenized actions with its own LM head. Both halves, always — a
+stop-gradient with no token objective just freezes the VLM and reproduces the existing
+`frozen encoder` result (action loss 0.092) under a misleading name. `SmolVLAConfig.__post_init__`
+rejects `ki_fast_loss_weight <= 0` and `train_expert_only=True` for that reason.
 
-### Verified so far
+```bash
+./run_barx_frontonly_ki.sh                       # BATCH_SIZE=32 recommended, see memory below
+python tools/smoke_test_knowledge_insulation.py  # run this first, ~3 min on one GPU
+```
 
-* `pip install scipy` is required — without it `AutoProcessor.from_pretrained(
-  "physical-intelligence/fast", trust_remote_code=True)` raises ImportError. Now installed.
-* FAST tokenizer works: a `[1, 50, 12]` action chunk → **424 tokens, ids 265–1974** (variable
-  length; it is a compression-based tokenizer, so length depends on the chunk).
-* openpi's convention (`src/openpi/models/tokenizer.py::FASTTokenizer`):
-  `prefix = "Task: {text}, State: {state discretized to 256 bins};\n"`,
-  `postfix = "Action: " + fast_tokens + "|"` with EOS; loss on the postfix only; AR mask 0 on
-  prefix (bidirectional) and 1 on postfix (causal). Action tokens are mapped into the last part
-  of the LM vocab, skipping the final 128 special tokens.
-* **openpi does not contain the KI training path itself** — its README states only the flow
-  matching head is supported for π₀.₅. The FAST tokenizer is there for π₀-FAST. The combination
-  has to be written here.
+### What was built
 
-### Two blockers found while placing the stop-gradient
+| where | what |
+|---|---|
+| `configuration_smolvla.py` | `knowledge_insulation`, `ki_fast_loss_weight`, `ki_fast_max_tokens`, `ki_fast_skip_tokens`, `ki_fast_tokenizer_path` |
+| `fast_action_tokenizer.py` (new) | action chunk → `"Action: " + FAST ids + eos`, ids mapped into the LM vocab tail |
+| `smolvlm_with_expert.py` | the stop-gradient (both layer types), `lm_head` unfrozen under the flag |
+| `modeling_smolvla.py` | postfix in the prefix stream, mask/position surgery, CE loss |
+| `tools/smoke_test_knowledge_insulation.py` (new) | seven checks, all passing |
+| `run_barx_frontonly_ki.sh` (new) | preset |
 
-1. **`lm_head` is deliberately frozen.** `smolvlm_with_expert.py::set_requires_grad()` puts
-   `lm_head`, `text_model.model.norm.weight` and the last text layers in `frozen_layers` to
-   avoid DDP unused-parameter errors. The FAST objective needs `lm_head` trainable, so that
-   original reason has to be handled again (it is reachable from the VLM forward once a CE loss
-   exists, so it should be fine — but it must be verified, not assumed).
+The sequence the VLM sees is `images | language | state | Action: <FAST ids> eos`, and the action
+expert's noisy-action tokens hang off it as before. This deviates from openpi in one place: state
+stays a continuous `state_proj` embedding instead of openpi's 256-bin discretization into the text
+prompt. Changing it would rewrite the prefix for every other run in this repo, and the token
+objective does not need it.
 
-2. **The self-attention layers make a clean detach non-trivial.** With
-   `attention_mode="cross_attn"` and `self_attn_every_n_layers=2`:
-   * odd layers → `forward_cross_attn_layer`, the expert explicitly reads prefix K/V. A
-     `.detach()` on that K/V is a clean one-line insulation.
-   * even layers → `forward_attn_layer`, which concatenates prefix and suffix into ONE attention
-     (`query_states = cat([prefix_q, suffix_q])`, same for K/V). Detaching the prefix K/V there
-     would also cut the VLM's own internal gradient, which is wrong — insulation must block the
-     action→VLM path only, not the VLM→VLM path. This layer needs the attention split (prefix
-     queries over undetached prefix K/V, suffix queries over detached prefix K/V) rather than a
-     single detach.
+### The two blockers, and how they were resolved
 
-### Remaining steps
+1. **`lm_head` was frozen** by `set_requires_grad()`'s `frozen_layers` list. Under the flag it is
+   removed from that list. The original reason (DDP unused-parameter errors) does not apply once a
+   CE loss exists — verified: DDP now reports *no* unused parameters at all.
+   Worth knowing: the other two entries in that list, `text_model.model.norm.weight` and
+   `text_model.model.layers.N.`, **match nothing**. The real names are `model.text_model.norm.weight`
+   and `model.text_model.layers.N.`. `lm_head.weight` was the only parameter that list ever froze,
+   so "the last text layers are frozen" is not true of this checkout and never was.
 
-3. add `--policy.knowledge_insulation` to `configuration_smolvla.py`
-4. insulate: one-line detach in `forward_cross_attn_layer`; split attention in
-   `forward_attn_layer` as described above
-5. allow `lm_head` + final text layers to train when the flag is set
-6. FAST tokenization in the data path + CE loss on the postfix, following openpi's convention
-7. smoke test that must check BOTH: (a) VLM params receive no gradient from the flow-matching
-   term alone, (b) the CE loss actually falls
-8. full run
+2. **The self-attention layers needed the attention split, not a detach.** Resolved as planned:
+   * odd layers (`forward_cross_attn_layer`) — one `.detach()` on the prefix K/V the expert reads.
+   * even layers (`forward_attn_layer`) — prefix queries attend over undetached prefix K/V, suffix
+     queries over detached prefix K/V plus their own, and the two outputs are concatenated.
+     Restricting the prefix block drops only entries the mask already killed (prefix rows can
+     never reach suffix columns: their `att_masks` cumsum is strictly smaller), so this is the
+     same function, just with a gradient cut through the middle of it.
 
-Do not run a stop-gradient-only variant and call it knowledge insulation: with no FAST objective
-the VLM receives no gradient at all, which reproduces the existing `frozen encoder` result
-(action loss 0.092) under a misleading name.
+### Two things that are easy to get wrong and are handled
+
+**The action expert must not read the postfix.** The postfix holds the ground-truth actions, and
+the cumulative `att_masks` rule would happily let the suffix attend to it — free labels, and the
+flow-matching loss would collapse into a lie. `forward()` clears that block of the 2-D mask
+explicitly, which also covers the cross-attention layers because they slice their expert mask out
+of the same tensor.
+
+**The suffix keeps the position ids it would have had without a postfix.** Otherwise ~250 extra
+tokens would shift every action token's RoPE phase and the expert would no longer be comparable to
+any baseline. The postfix and the suffix therefore share a position range, which is safe precisely
+because they never attend to each other.
+
+### Verified (`tools/smoke_test_knowledge_insulation.py`, 7/7 pass)
+
+* FAST tokens round-trip through the LM vocabulary mapping: `max |a - decode(encode(a))| = 0.074`.
+* The split attention reproduces the stock action path to bf16 precision (2.6e-2 on a loss of 13).
+* **No label leakage**: `d(flow_loss)/d(postfix embeddings) = 0` exactly, while `d(CE)/d(postfix)`
+  is 7.0 — the probe is live, the path is not. Autograd, not a numerical comparison, because
+  bf16 noise across two forward passes is larger than a small leak would be.
+* **Insulation holds**: the flow-matching term alone leaves `|g| = 0` across all 237 VLM
+  parameters while the expert gets `|g| = 13.2`. Without the flag the same loss puts `|g| = 14.6`
+  on the VLM — that control is in the test, since "zero gradient" is also what a broken forward
+  pass produces.
+* The CE trains the VLM including `lm_head` and the vision tower.
+* Overfitting one synthetic batch: CE 45.1 → 0.016, token accuracy 0 → 1.00 in 150 steps.
+
+Real data, barx front-only, batch 64 x 2 GPUs, 300 steps: CE **9.50 → 5.62**, token accuracy
+0.068, `fast_tokens_mean` **172** ids per 50x12 chunk (max 243, nothing truncated at the 256 cap),
+flow-matching loss 0.22-0.25. Both terms move; nothing NaNs; checkpointing works.
+
+### Cost — this is the part that changes how you launch it
+
+The postfix adds ~172 tokens to a ~163-token sequence, and attention here is eager (it materializes
+`B x heads x L x L` in float32), so memory grows with the square. Measured peak on one H100,
+2-GPU DDP, front camera only:
+
+| run | per-rank batch | peak GPU mem | s/step |
+|---|---|---|---|
+| baseline | 64 | 36.6 GiB | 0.387 |
+| KI | 32 | 56.4 GiB | 0.317 |
+| KI | 48 | 70.3 GiB | 0.450 |
+| KI | 64 | **79.7 GiB of 79.7 available** | 0.576 |
+
+Batch 64 completed 100 steps but sits at 98% of the card — one longer-than-usual postfix would
+OOM it, and it cannot share GPUs with anything. **Use `BATCH_SIZE=32`** (effective 256 on 8 GPUs,
+half the 512 the section-4 baselines used — say so when comparing) or 48 if the box is otherwise
+idle. If the effective batch has to stay at 512, the cheap win available is `masked_fill_` instead
+of `torch.where` in `eager_attention_forward`, which drops one full `L x L` float32 tensor per
+layer; it is numerically identical but touches the path every existing run uses, so it was left
+alone here.
+
+`ki_fast_max_tokens` (default 256) caps the postfix; `fast_truncated_frac` in the metrics tells
+you if it is biting. Truncation costs supervision on the tail of the chunk, nothing else.
+
+### Not done
+
+* **Step 8, the full run.** Everything is in place and smoke-tested; no 50k-step job has been
+  launched.
+* RA-BC per-sample weighting with knowledge insulation raises `NotImplementedError` — the CE is a
+  scalar over tokens, not a per-sample loss. Nothing needs it today.
+* Chunks that run past the end of an episode are dropped from the token loss (they are padded with
+  repeated frames, and one token stream cannot mask per timestep the way the flow loss does). The
+  key that flags them, `actions_id_pad`, is not currently produced by this dataset path, so that
+  guard is untested in practice.

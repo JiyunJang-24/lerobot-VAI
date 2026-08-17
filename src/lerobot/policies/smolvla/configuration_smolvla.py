@@ -107,6 +107,20 @@ class SmolVLAConfig(PreTrainedConfig):
     rtc_config: RTCConfig | None = None
     visual_cue_mode: str = "none"  # Options are: "none", "basis", "basis-concat"
 
+    # Knowledge insulation (pi_0.5). Two halves that only make sense together:
+    #   * the flow-matching gradient is stopped before it reaches the VLM, and
+    #   * the VLM is instead trained to predict the FAST-tokenized action chunk with its LM head.
+    # Enabling the stop-gradient without the token objective would simply freeze the VLM.
+    knowledge_insulation: bool = False
+    ki_fast_tokenizer_path: str = "physical-intelligence/fast"
+    ki_fast_loss_weight: float = 1.0
+    # Cap on the postfix length (prompt + FAST ids + eos). Bounds both the VLM sequence length and
+    # the (batch, len, vocab) logits tensor. Smooth 12-d chunks tokenize to ~50-150 ids.
+    ki_fast_max_tokens: int = 256
+    # Number of special tokens at the end of the LM vocabulary that action ids must not collide
+    # with (openpi's `_fast_skip_tokens`).
+    ki_fast_skip_tokens: int = 128
+
     def __post_init__(self):
         super().__post_init__()
 
@@ -115,6 +129,17 @@ class SmolVLAConfig(PreTrainedConfig):
             raise ValueError(
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
                 f"{self.n_action_steps} for `n_action_steps` and {self.chunk_size} for `chunk_size`."
+            )
+        if self.knowledge_insulation and self.train_expert_only:
+            raise ValueError(
+                "`knowledge_insulation` trains the VLM through the FAST token objective, which "
+                "`train_expert_only=True` freezes. Pass --policy.train_expert_only=false."
+            )
+        if self.knowledge_insulation and self.ki_fast_loss_weight <= 0:
+            raise ValueError(
+                "`knowledge_insulation` with `ki_fast_loss_weight <= 0` stops the flow-matching "
+                "gradient into the VLM without putting anything in its place, which is just a "
+                "frozen VLM under a misleading name."
             )
         if self.use_delta_joint_actions_aloha:
             raise NotImplementedError(

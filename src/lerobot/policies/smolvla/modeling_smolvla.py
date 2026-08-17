@@ -64,6 +64,7 @@ from typing_extensions import Unpack
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+from lerobot.policies.smolvla.fast_action_tokenizer import FASTActionTokenizer
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.policies.utils import (
     populate_queues,
@@ -394,7 +395,15 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("actions_id_pad")
         loss_dict = {}
-        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
+        fast_postfix = self.prepare_fast_postfix(batch, actions_is_pad)
+        if fast_postfix is not None and reduction == "none":
+            raise NotImplementedError(
+                "RA-BC per-sample weighting and knowledge insulation are not combined yet: the "
+                "FAST cross-entropy is a scalar over tokens, not a per-sample loss."
+            )
+        losses, aux = self.model.forward(
+            images, img_masks, lang_tokens, lang_masks, state, actions, noise, time, fast_postfix
+        )
         loss_dict["losses_after_forward"] = losses.clone()
         if actions_is_pad is not None:
             in_episode_bound = ~actions_is_pad
@@ -413,6 +422,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
         else:
             # Default: return scalar mean loss
             loss = losses.mean()
+            loss_dict["flow_matching_loss"] = loss.item()
+            if aux:
+                ce = aux.pop("fast_ce_loss")
+                loss = loss + self.config.ki_fast_loss_weight * ce
+                loss_dict["fast_ce_loss"] = ce.item()
+                loss_dict.update(aux)
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 
@@ -495,6 +510,23 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """Pad action"""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
+
+    def prepare_fast_postfix(self, batch, actions_is_pad=None):
+        """FAST-tokenize the action chunk into the LM postfix (knowledge insulation only)."""
+        if not self.config.knowledge_insulation:
+            return None
+        # Tokenize the true action dimensions, not the 32-d zero padding: padding the chunk out
+        # roughly triples the token count for no added information.
+        action_dim = self.config.action_feature.shape[0]
+        raw_actions = batch[ACTION][..., :action_dim]
+        postfix = self.model.fast_tokenizer.encode(raw_actions)
+        if actions_is_pad is not None:
+            # A chunk that runs past the end of its episode is padded with repeated frames; it
+            # would be tokenized as if it were real. Drop those samples from the token loss (the
+            # flow-matching term masks them per timestep, which a single token stream cannot do).
+            has_pad = actions_is_pad.reshape(actions_is_pad.shape[0], -1).any(dim=1)
+            postfix["loss_masks"] = postfix["loss_masks"] & (~has_pad)[:, None]
+        return postfix
 
 
     def _get_visual_cues(self, item):
@@ -660,7 +692,17 @@ class VLAFlowMatching(nn.Module):
             expert_width_multiplier=self.config.expert_width_multiplier,
             device=self.config.device if self.config.device is not None else "auto",
             visual_cue_mode=self.config.visual_cue_mode,
+            knowledge_insulation=self.config.knowledge_insulation,
         )
+        self.fast_tokenizer = None
+        if self.config.knowledge_insulation:
+            self.fast_tokenizer = FASTActionTokenizer(
+                text_tokenizer=self.vlm_with_expert.processor.tokenizer,
+                vocab_size=self.vlm_with_expert.config.text_config.vocab_size,
+                tokenizer_path=self.config.ki_fast_tokenizer_path,
+                skip_tokens=self.config.ki_fast_skip_tokens,
+                max_tokens=self.config.ki_fast_max_tokens,
+            )
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
         )
@@ -710,7 +752,14 @@ class VLAFlowMatching(nn.Module):
         return time
 
     def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks, state: torch.Tensor = None
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state: torch.Tensor = None,
+        postfix_tokens: torch.Tensor | None = None,
+        postfix_pad_masks: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for SmolVLM transformer processing.
@@ -801,6 +850,19 @@ class VLAFlowMatching(nn.Module):
 
         att_masks = att_masks.expand(bsize, -1)
 
+        if postfix_tokens is not None:
+            # Knowledge insulation: the FAST-tokenized action chunk, appended to the VLM stream as
+            # ordinary language tokens. `att_masks` 1 per token makes the block causal, so token t
+            # is predicted from everything before it and never from itself. The action expert is
+            # cut off from this block by `forward()` (it holds the ground-truth actions).
+            postfix_emb = self.vlm_with_expert.embed_language_tokens(postfix_tokens)
+            postfix_emb = postfix_emb * math.sqrt(postfix_emb.shape[-1])
+            embs = torch.cat([embs, postfix_emb.to(dtype=embs.dtype)], dim=1)
+            pad_masks = torch.cat([pad_masks, postfix_pad_masks], dim=1)
+            att_masks = torch.cat(
+                [att_masks, torch.ones_like(postfix_pad_masks, dtype=att_masks.dtype)], dim=1
+            )
+
         return embs, pad_masks, att_masks
 
     def embed_suffix(self, noisy_actions, timestep):
@@ -847,9 +909,22 @@ class VLAFlowMatching(nn.Module):
         return embs, pad_masks, att_masks
 
     def forward(
-        self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None
-    ) -> Tensor:
-        """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        actions,
+        noise=None,
+        time=None,
+        fast_postfix: dict | None = None,
+    ) -> tuple[Tensor, dict]:
+        """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors).
+
+        With `fast_postfix` (knowledge insulation) the returned dict also carries the FAST
+        token cross-entropy, which is the only gradient the VLM receives.
+        """
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -859,8 +934,16 @@ class VLAFlowMatching(nn.Module):
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
+        postfix_tokens = fast_postfix["tokens"] if fast_postfix is not None else None
+        postfix_pad_masks = fast_postfix["pad_masks"] if fast_postfix is not None else None
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, state=state
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            state=state,
+            postfix_tokens=postfix_tokens,
+            postfix_pad_masks=postfix_pad_masks,
         )
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, time)
 
@@ -869,7 +952,27 @@ class VLAFlowMatching(nn.Module):
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
-        (_, suffix_out), _ = self.vlm_with_expert.forward(
+
+        if fast_postfix is not None:
+            prefix_len = prefix_pad_masks.shape[1]
+            postfix_len = postfix_tokens.shape[1]
+            core_len = prefix_len - postfix_len
+
+            # The action expert must not see the ground-truth action tokens. The cumulative
+            # `att_masks` rule would let it (the postfix sits before the suffix), so the block is
+            # cleared explicitly. This also covers the cross-attention layers, which slice their
+            # expert mask out of this same tensor.
+            att_2d_masks[:, prefix_len:, core_len:prefix_len] = False
+
+            # Give the suffix the position ids it would have had without a postfix, so the action
+            # expert's RoPE geometry is bit-identical to a run without knowledge insulation. The
+            # postfix and the suffix therefore share a position range, which is harmless: the two
+            # blocks never attend to each other.
+            core_offset = prefix_pad_masks[:, :core_len].sum(dim=1, keepdim=True)
+            suffix_position_ids = core_offset + torch.cumsum(suffix_pad_masks, dim=1) - 1
+            position_ids = torch.cat([position_ids[:, :prefix_len], suffix_position_ids], dim=1)
+
+        (prefix_out, suffix_out), _ = self.vlm_with_expert.forward(
             attention_mask=att_2d_masks,
             position_ids=position_ids,
             past_key_values=None,
@@ -882,7 +985,40 @@ class VLAFlowMatching(nn.Module):
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.action_out_proj(suffix_out)
         losses = F.mse_loss(u_t, v_t, reduction="none")
-        return losses
+
+        aux = {}
+        if fast_postfix is not None:
+            aux.update(self.fast_token_loss(prefix_out, fast_postfix, core_len, prefix_len))
+        return losses, aux
+
+    def fast_token_loss(self, prefix_out, fast_postfix, core_len, prefix_len) -> dict:
+        """Next-token cross-entropy over the FAST postfix — the VLM's own training signal."""
+        loss_masks = fast_postfix["loss_masks"]
+        # Hidden state at t predicts token t+1, so the postfix targets are read off the positions
+        # shifted one to the left. Position `core_len - 1` is the state token, always unpadded.
+        hidden = prefix_out[:, core_len - 1 : prefix_len - 1]
+        # Only the supervised positions reach the LM head: the head is (hidden x 49280) and
+        # materialising logits for the prompt and the padding as well would triple the memory.
+        selected = hidden[loss_masks]
+        targets = fast_postfix["tokens"][loss_masks]
+        empty = selected.numel() == 0
+        if empty:
+            # Every sample in this batch was dropped (all chunks ran past their episode end).
+            # Keep the LM head in the graph with a zeroed loss rather than returning NaN.
+            selected = hidden[:, 0]
+            targets = fast_postfix["tokens"][:, 0]
+        logits = self.vlm_with_expert.lm_logits(selected).float()
+        ce = F.cross_entropy(logits, targets)
+        if empty:
+            ce = ce * 0.0
+        with torch.no_grad():
+            accuracy = (logits.argmax(dim=-1) == targets).float().mean()
+        return {
+            "fast_ce_loss": ce,
+            "fast_token_accuracy": accuracy.item(),
+            "fast_postfix_len": float(fast_postfix["tokens"].shape[1]),
+            **fast_postfix["stats"],
+        }
 
     def sample_actions(
         self,
