@@ -848,23 +848,28 @@ def _copy_and_reindex_episodes_metadata(
                 parts = stat_key.split("/")
                 if len(parts) == 2:
                     feature_name, stat_name = parts
+                    if feature_name not in src_dataset.meta.features:
+                        # Stale stats column left over in the parquet from a feature that was
+                        # already removed from this source dataset (e.g. via remove_feature()) --
+                        # meta.features no longer lists it, so it must not be carried into the
+                        # new aggregate either.
+                        continue
                     if feature_name not in episode_stats:
                         episode_stats[feature_name] = {}
 
                     value = src_episode_full[key]
 
-                    if feature_name in src_dataset.meta.features:
-                        feature_dtype = src_dataset.meta.features[feature_name]["dtype"]
-                        if feature_dtype in ["image", "video"] and stat_name != "count":
-                            if isinstance(value, np.ndarray) and value.dtype == object:
-                                flat_values = []
-                                for item in value:
-                                    while isinstance(item, np.ndarray):
-                                        item = item.flatten()[0]
-                                    flat_values.append(item)
-                                value = np.array(flat_values, dtype=np.float64).reshape(3, 1, 1)
-                            elif isinstance(value, np.ndarray) and value.shape == (3,):
-                                value = value.reshape(3, 1, 1)
+                    feature_dtype = src_dataset.meta.features[feature_name]["dtype"]
+                    if feature_dtype in ["image", "video"] and stat_name != "count":
+                        if isinstance(value, np.ndarray) and value.dtype == object:
+                            flat_values = []
+                            for item in value:
+                                while isinstance(item, np.ndarray):
+                                    item = item.flatten()[0]
+                                flat_values.append(item)
+                            value = np.array(flat_values, dtype=np.float64).reshape(3, 1, 1)
+                        elif isinstance(value, np.ndarray) and value.shape == (3,):
+                            value = value.reshape(3, 1, 1)
 
                     episode_stats[feature_name][stat_name] = value
 

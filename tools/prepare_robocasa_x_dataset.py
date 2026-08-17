@@ -36,6 +36,9 @@ from lerobot.datasets.dataset_tools import remove_feature, split_dataset  # noqa
 from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 from lerobot.datasets.utils import load_info  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from normalize_task_language import normalize as normalize_task_language  # noqa: E402
+
 V30 = "v3.0"
 DEFAULT_CAMERAS = [
     "observation.images.robot0_agentview_right",
@@ -131,6 +134,19 @@ def main() -> None:
         help="panda_human (all) + panda_mg (however many needed) should sum to this.",
     )
     parser.add_argument(
+        "--panda-human-episodes",
+        type=int,
+        default=None,
+        help=(
+            "How many panda_human episodes to use (default: all of them). Pass 0 to drop "
+            "panda_human entirely and take the whole --panda-total-episodes from panda_mg. That is "
+            "the right choice when panda_human is the only subset whose action carries mobile-base "
+            "/ torso motion (dims 0,1,2,4): those dims are constant in every other subset, so "
+            "pooling them into one MEAN_STD normalizer collapses their std to ~1e-3 and blows the "
+            "handful of panda_human values up to |z| ~ 10^2, which then dominates the action loss."
+        ),
+    )
+    parser.add_argument(
         "--iiwa-episodes",
         type=int,
         default=None,
@@ -150,9 +166,23 @@ def main() -> None:
         help="Camera feature keys to KEEP (all others dropped from every source)",
     )
     parser.add_argument("--force", action="store_true", help="Redo the subset step even if it already exists")
+    parser.add_argument(
+        "--normalize-task-language",
+        action="store_true",
+        help=(
+            "Put every subset's instructions in one surface style (leading capital + full stop, the "
+            "panda convention). The PnP exports phrase them differently per robot -- panda "
+            "'Pick the onion ... in the pan.' vs iiwa/ur5e 'pick the can ... in the sink' -- and "
+            "since each robot also does a different task, that styling is perfectly correlated with "
+            "the embodiment, letting the language encoder identify the robot from capitalisation "
+            "instead of from the instruction's content."
+        ),
+    )
     args = parser.parse_args()
 
-    require_v30(args.source_panda_human, "--source-panda-human")
+    skip_panda_human = args.panda_human_episodes == 0
+    if not skip_panda_human:
+        require_v30(args.source_panda_human, "--source-panda-human")
     require_v30(args.source_panda_mg, "--source-panda-mg")
     require_v30(args.source_iiwa, "--source-iiwa")
     require_v30(args.source_ur5e, "--source-ur5e")
@@ -161,14 +191,18 @@ def main() -> None:
     raw_dir = output_root / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    panda_human_episodes = build_subset(
-        args.source_panda_human,
-        raw_dir / "panda_human",
-        "panda_human",
-        args.cameras,
-        max_episodes=None,
-        force=args.force,
-    )
+    if skip_panda_human:
+        log("panda_human: --panda-human-episodes=0, skipping it; panda comes entirely from panda_mg")
+        panda_human_episodes = 0
+    else:
+        panda_human_episodes = build_subset(
+            args.source_panda_human,
+            raw_dir / "panda_human",
+            "panda_human",
+            args.cameras,
+            max_episodes=args.panda_human_episodes,
+            force=args.force,
+        )
 
     mg_needed = args.panda_total_episodes - panda_human_episodes
     if mg_needed <= 0:
@@ -224,11 +258,20 @@ def main() -> None:
         force=args.force,
     )
 
+    repo_ids = (["panda_human"] if not skip_panda_human else []) + ["panda_mg", "iiwa", "ur5e"]
+
+    if args.normalize_task_language:
+        # Run unconditionally (not just on freshly-built subsets) so it still applies when
+        # build_subset skipped a dest that already existed; it is idempotent.
+        for repo_id in repo_ids:
+            if normalize_task_language(raw_dir / repo_id, dry_run=False) != 0:
+                raise SystemExit(f"task-language normalization failed for {repo_id}")
+
     total = panda_human_episodes + panda_mg_episodes + iiwa_episodes + ur5e_episodes
     log(
         f"done: panda_human={panda_human_episodes} + panda_mg={panda_mg_episodes} + iiwa={iiwa_episodes} "
         f"+ ur5e={ur5e_episodes} = {total} episodes ready under {raw_dir} "
-        f"(repo_ids: panda_human, panda_mg, iiwa, ur5e)"
+        f"(repo_ids: {', '.join(repo_ids)})"
     )
 
 

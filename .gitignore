@@ -186,3 +186,9 @@ dataset_git/
 .ffmpeg_shim/
 
 *.csv
+
+### lerobot-VAI local artefacts ###
+# symlink to /dataset/jiyun/dataset_git (54 GB of prepared corpora on NFS)
+dataset_git
+# generated at runtime by train_smolVLA_robocasa_x.sh: PyAV's ffmpeg exposed under plain sonames
+.ffmpeg_shim/

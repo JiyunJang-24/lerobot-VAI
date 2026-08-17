@@ -59,13 +59,20 @@ export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
 # --- Data prep (subset only -- source datasets must already be v3.0) ---------------------------
-ROBOCASA_ROOT="/root/Desktop/workspace/jiyun/robocasa/datasets"
-SOURCE_PANDA_HUMAN="${SOURCE_PANDA_HUMAN:-${ROBOCASA_ROOT}/v1.0/pretrain/atomic/TurnOnSinkFaucet/20250819/lerobot}"
-SOURCE_PANDA_MG="${SOURCE_PANDA_MG:-${ROBOCASA_ROOT}/v1.0/pretrain/atomic/TurnOnSinkFaucet/20250819/mg/demo/2025-08-21-12-24-03/lerobot}"
-# IIWA / UR5e come from the pre-converted cross_embodiment trees (already v3.0, already the same
-# robot0_agentview_right + robot0_eye_in_hand 256x256 camera pair as panda, same TurnOnSinkFaucet
-# task). The raw barx/mg trees are NOT usable here: they are HDF5, not LeRobot datasets, and carry a
-# single `agentview_rgb` at 180x320, so they would need a full mujoco/robosuite re-render first.
+# All four sources live under this repo's dataset_git/ tree (they were copied here from the original
+# robocasa export box, which is why these are no longer /root/Desktop/... paths).
+ROBOCASA_ROOT="${SCRIPT_DIR}/dataset_git"
+# The Panda pair is taken from the already-prepared robocasa_sweep/ep1000 subset rather than the raw
+# atomic export: it is v3.0, already reduced to the robot0_agentview_right + robot0_eye_in_hand
+# camera pair, and already split 107 human + 893 mg = exactly PANDA_TOTAL_EPISODES (1000). Because
+# the episode counts already match, the prep step below copies these two through untouched.
+SOURCE_PANDA_HUMAN="${SOURCE_PANDA_HUMAN:-${ROBOCASA_ROOT}/robocasa_sweep/ep1000/raw/human}"
+SOURCE_PANDA_MG="${SOURCE_PANDA_MG:-${ROBOCASA_ROOT}/robocasa_sweep/ep1000/raw/mg}"
+# IIWA / UR5e come from the pre-converted cross_embodiment trees (already v3.0, same 256x256 cameras
+# and same TurnOnSinkFaucet task as panda, but still carrying the third robot0_agentview_left camera
+# that the prep step drops). The raw barx/mg trees are NOT usable here: they are HDF5, not LeRobot
+# datasets, and carry a single `agentview_rgb` at 180x320, so they would need a full mujoco/robosuite
+# re-render first.
 SOURCE_IIWA="${SOURCE_IIWA:-${ROBOCASA_ROOT}/cross_embodiment/lerobot_datasets/IIWAOmron_Robotiq85Gripper/TurnOnSinkFaucet/2026-07-24/lerobot}"
 SOURCE_UR5E="${SOURCE_UR5E:-${ROBOCASA_ROOT}/cross_embodiment/lerobot_datasets/UR5eOmron_Robotiq85Gripper/TurnOnSinkFaucet/2026-07-24/lerobot}"
 # panda_human (kept in full) + panda_mg (however many are needed) sum to this.
@@ -81,7 +88,24 @@ CAMERAS="${CAMERAS:-observation.images.robot0_agentview_right observation.images
 # PANDA_TOTAL_EPISODES (e.g. a prior run built a smaller subset at this same DATASET_ROOT).
 FORCE="${FORCE:-false}"
 
-for pair in "SOURCE_PANDA_HUMAN:${SOURCE_PANDA_HUMAN}" "SOURCE_PANDA_MG:${SOURCE_PANDA_MG}" \
+# Set USE_PANDA_HUMAN=false to build the whole panda share from panda_mg instead. Needed whenever
+# panda_human is the only subset with mobile-base/torso motion in action dims 0,1,2,4: those dims
+# are constant everywhere else, so one pooled MEAN_STD normalizer over all four subsets drives their
+# std to ~1e-3 and rescales panda_human's handful of real values to |z| ~ 10^2, which then swamps the
+# action loss (measured: 36% of total action MSE on the PnP mix, vs 0% on TurnOnSinkFaucet where no
+# subset moved the base).
+USE_PANDA_HUMAN="${USE_PANDA_HUMAN:-true}"
+if [[ "${USE_PANDA_HUMAN}" == "true" ]]; then
+  SOURCE_PAIRS=("SOURCE_PANDA_HUMAN:${SOURCE_PANDA_HUMAN}")
+  REPO_IDS="panda_human,panda_mg,iiwa,ur5e"
+  panda_human_flag=()
+else
+  SOURCE_PAIRS=()
+  REPO_IDS="panda_mg,iiwa,ur5e"
+  panda_human_flag=(--panda-human-episodes 0)
+fi
+
+for pair in "${SOURCE_PAIRS[@]+"${SOURCE_PAIRS[@]}"}" "SOURCE_PANDA_MG:${SOURCE_PANDA_MG}" \
             "SOURCE_IIWA:${SOURCE_IIWA}" "SOURCE_UR5E:${SOURCE_UR5E}"; do
   name="${pair%%:*}"
   path="${pair#*:}"
@@ -96,6 +120,15 @@ if [[ "${FORCE}" == "true" ]]; then
   force_flag=(--force)
 fi
 
+# Set NORMALIZE_TASK_LANGUAGE=true to restyle every subset's instructions to one convention
+# (leading capital + full stop). Only matters on mixes whose robots phrase instructions
+# differently -- see the flag's help in tools/prepare_robocasa_x_dataset.py.
+NORMALIZE_TASK_LANGUAGE="${NORMALIZE_TASK_LANGUAGE:-false}"
+normalize_lang_flag=()
+if [[ "${NORMALIZE_TASK_LANGUAGE}" == "true" ]]; then
+  normalize_lang_flag=(--normalize-task-language)
+fi
+
 # shellcheck disable=SC2086
 python "${SCRIPT_DIR}/tools/prepare_robocasa_x_dataset.py" \
   --source-panda-human "${SOURCE_PANDA_HUMAN}" \
@@ -107,6 +140,8 @@ python "${SCRIPT_DIR}/tools/prepare_robocasa_x_dataset.py" \
   --iiwa-episodes "${IIWA_EPISODES}" \
   --ur5e-episodes "${UR5E_EPISODES}" \
   --cameras ${CAMERAS} \
+  "${panda_human_flag[@]+"${panda_human_flag[@]}"}" \
+  "${normalize_lang_flag[@]+"${normalize_lang_flag[@]}"}" \
   "${force_flag[@]}"
 prep_status=$?
 if [[ ${prep_status} -ne 0 ]]; then
@@ -115,7 +150,7 @@ if [[ ${prep_status} -ne 0 ]]; then
 fi
 
 RAW_DATASET_DIR="${DATASET_ROOT}/raw"
-for repo_id in panda_human panda_mg iiwa ur5e; do
+for repo_id in ${REPO_IDS//,/ }; do
   if [[ ! -f "${RAW_DATASET_DIR}/${repo_id}/meta/info.json" ]]; then
     echo "Expected dataset at ${RAW_DATASET_DIR}/${repo_id} but meta/info.json is missing." >&2
     exit 1
@@ -123,9 +158,9 @@ for repo_id in panda_human panda_mg iiwa ur5e; do
 done
 
 # --- Training ------------------------------------------------------------------------------------
-# 48 is the measured ceiling on this box's 48 GB A6000s for full smolVLA fine-tuning (52 and 56 both
-# OOM; 48 sits at ~98.7% of GPU memory and held steady over a sustained run).
-BATCH_SIZE="${BATCH_SIZE:-48}"
+# 64 per GPU is what the panda-only ep1000 run sustained on this box's 80 GB H100s (~64 GB resident,
+# ~79% of GPU memory), so it leaves headroom for the extra embodiments' dataloader state.
+BATCH_SIZE="${BATCH_SIZE:-64}"
 NUM_WORKERS="${NUM_WORKERS:-12}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 # Caches the parquet (hf_dataset) only, not the videos -- cheap, and __getitem__ does many row
@@ -153,8 +188,18 @@ POLICY_VISUAL_CUE_MODE="${POLICY_VISUAL_CUE_MODE:-vanilla}"
 WANDB_MODE="${WANDB_MODE:-online}"
 # Overridable so a smoke test can run a handful of steps (e.g. STEPS=60 SAVE_FREQ=50) instead of the
 # full schedule.
-STEPS="${STEPS:-100000}"
-SAVE_FREQ="${SAVE_FREQ:-5000}"
+STEPS="${STEPS:-50000}"
+SAVE_FREQ="${SAVE_FREQ:-10000}"
+# Goes into --job_name (and therefore lerobot's default output dir + the wandb run name). Without
+# it, runs are named only by their episode counts -- so a TurnOnSinkFaucet mix and a PnP mix with
+# the same per-robot counts produce indistinguishable directories. Set it to whatever identifies
+# the task/dataset behind the run, e.g. JOB_TAG=multi_task_pnp. Empty keeps the old naming.
+JOB_TAG="${JOB_TAG:-}"
+if [[ -n "${JOB_TAG}" ]]; then
+  JOB_NAME="smolvla_robocasa_x_${JOB_TAG}_p${PANDA_TOTAL_EPISODES}_i${IIWA_EPISODES}_u${UR5E_EPISODES}"
+else
+  JOB_NAME="smolvla_robocasa_x_p${PANDA_TOTAL_EPISODES}_i${IIWA_EPISODES}_u${UR5E_EPISODES}"
+fi
 # By default lerobot picks its own timestamped outputs/train/<date>/<time>_<job_name> directory; set
 # OUTPUT_DIR to pin it. lerobot refuses to start if that directory already exists (unless resuming).
 output_dir_flag=()
@@ -171,20 +216,39 @@ if [[ -z "${GPU_IDS:-}" ]]; then
 fi
 NUM_GPUS="$(awk -F',' '{print NF}' <<<"${GPU_IDS}")"
 
-echo "Dataset root: ${RAW_DATASET_DIR} (repo_ids: panda_human, panda_mg, iiwa, ur5e)"
+# Which training entrypoint to launch, plus any extra flags to append. Defaults reproduce the plain
+# run; train_smolVLA_robocasa_x_visual_robust.sh points these at the visual-robust trainer so it can
+# reuse this script's data prep instead of duplicating it.
+TRAIN_SCRIPT="${TRAIN_SCRIPT:-src/lerobot/scripts/lerobot_train.py}"
+# Extra flags arrive as a NEWLINE-DELIMITED string, not a bash array: arrays are not part of the
+# process environment, so `export EXTRA_TRAIN_ARGS=(...)` in a caller reaches this script as
+# nothing at all -- which would silently drop e.g. every --dataset.visual_robust_* flag and train
+# with no auxiliary loss while looking perfectly healthy.
+EXTRA_TRAIN_ARGS=()
+if [[ -n "${EXTRA_TRAIN_ARGS_STR:-}" ]]; then
+  mapfile -t EXTRA_TRAIN_ARGS <<<"${EXTRA_TRAIN_ARGS_STR}"
+fi
+
+echo "Dataset root: ${RAW_DATASET_DIR} (repo_ids: ${REPO_IDS})"
 echo "Episodes: panda=${PANDA_TOTAL_EPISODES} iiwa=${IIWA_EPISODES} ur5e=${UR5E_EPISODES}"
 echo "Cameras: ${CAMERAS}"
+echo "Job name: ${JOB_NAME}"
 echo "GPU IDs: ${GPU_IDS} (${NUM_GPUS} process(es))"
 echo "Per-GPU batch size: ${BATCH_SIZE}"
 echo "Effective batch size: $((BATCH_SIZE * NUM_GPUS))"
+echo "Trainer: ${TRAIN_SCRIPT}"
 
+# accelerate's rendezvous port. Two runs sharing the same GPUs (e.g. a frozen-encoder baseline
+# alongside a live job) both try to bind 29500 and the second one dies with "address already in
+# use", so a parallel launch must be given its own port.
 accelerate launch \
   --multi_gpu \
   --num_processes "${NUM_GPUS}" \
   --gpu_ids "${GPU_IDS}" \
+  --main_process_port "${MAIN_PROCESS_PORT:-29500}" \
   --mixed_precision "${MIXED_PRECISION}" \
-  src/lerobot/scripts/lerobot_train.py \
-  --dataset.repo_id="[panda_human,panda_mg,iiwa,ur5e]" \
+  "${TRAIN_SCRIPT}" \
+  --dataset.repo_id="[${REPO_IDS}]" \
   --dataset.root="${RAW_DATASET_DIR}" \
   --tolerance_s="${TOLERANCE_S}" \
   --dataset.cache_in_memory="${CACHE_IN_MEMORY}" \
@@ -205,9 +269,13 @@ accelerate launch \
   --num_workers="${NUM_WORKERS}" \
   --dataloader_prefetch_factor="${PREFETCH_FACTOR}" \
   --dataloader_persistent_workers=true \
-  --job_name="smolvla_robocasa_x_p${PANDA_TOTAL_EPISODES}_i${IIWA_EPISODES}_u${UR5E_EPISODES}" \
+  --job_name="${JOB_NAME}" \
   --policy.visual_cue_mode="${POLICY_VISUAL_CUE_MODE}" \
   --policy.load_vlm_weights=true \
-  --policy.freeze_vision_encoder=false \
-  --policy.train_expert_only=false
+  --policy.freeze_vision_encoder="${FREEZE_VISION_ENCODER:-false}" \
+  --policy.train_expert_only=false \
+  --dataset.vision_l2sp_weight="${VISION_L2SP_WEIGHT:-0.0}" \
+  --dataset.vision_l2sp_scope="${VISION_L2SP_SCOPE:-vision}" \
+  --dataset.vision_distill_weight="${VISION_DISTILL_WEIGHT:-0.0}" \
+  "${EXTRA_TRAIN_ARGS[@]+"${EXTRA_TRAIN_ARGS[@]}"}"
 # Training checkpoints will be saved under: lerobot/outputs/train/202x-xx-xx/xx-xx-xx_smolvla

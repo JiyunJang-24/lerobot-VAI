@@ -13,7 +13,17 @@
 #     (--push-to-hub false), which keeps a "<name>_old" backup of the pre-conversion directory next
 #     to it.
 #   - already "v3.0": format conversion is skipped.
-#   - In all three cases, finally runs (both idempotent, no-op if nothing to fix):
+#   - In all three cases, first runs (idempotent, no-op if nothing to fix):
+#     - tools/normalize_video_dirs.py: some exports (the IIWA/UR5e trees in
+#       ChiefJang/robocasa_x_atomic_ur5e_iiwa) name per-camera video dirs `videos/chunk-000/
+#       robot0_agentview_right/` rather than the `observation.images.robot0_agentview_right/` that
+#       convert_dataset_v21_to_v30.py globs for, so it sees 0 episodes for every camera and dies
+#       with "Number of episodes is not the same ({1000, 0})".
+#   - ...and afterwards runs (all idempotent, no-op if nothing to fix):
+#     - tools/flatten_singleton_columns.py: those same exports store `shape: [1]` features
+#       (next.reward, next.done, annotation.human.*) as length-1 lists instead of scalars, which
+#       the format conversion copies through verbatim; anything that later opens the dataset then
+#       fails its schema cast with "Couldn't cast array of type list<element: int64> to int64".
 #     - tools/ensure_frame_index.py: some RoboCasa "mg" (MimicGen) exports never had a
 #       `frame_index` column, which makes this project's `lerobot.datasets.dataset_tools`
 #       (split_dataset/remove_feature, used by tools/prepare_robocasa_dataset.py to build a
@@ -87,16 +97,36 @@ convert_one() {
 
   echo "[START] ${dataset_path} (${version})"
   {
+    echo "--- normalize per-camera video dir names ---"
+    python "${SCRIPT_DIR}/tools/normalize_video_dirs.py" --root "${dataset_path}"
+    normalize_status=$?
+    if [[ ${normalize_status} -ne 0 ]]; then
+      exit "${normalize_status}"
+    fi
     if [[ "${version}" == "v3.0" ]]; then
       echo "--- already v3.0, skipping format conversion ---"
     else
+      # Some exports declare "v2.1" but ship the v2.0 layout with no meta/episodes_stats.jsonl
+      # (ChiefJang/visual_robust_robocasa_x does). convert_dataset_v21_to_v30.py only discovers that
+      # at its very last step and dies with FileNotFoundError after already rewriting every video,
+      # so decide up front from what is actually on disk rather than from the declared version.
+      shim_force=()
+      needs_shim=false
       if [[ "${version}" == "v2.0" ]]; then
+        needs_shim=true
+      elif [[ ! -f "${dataset_path}/meta/episodes_stats.jsonl" ]]; then
+        needs_shim=true
+        shim_force=(--force)
+        echo "--- declared ${version} but meta/episodes_stats.jsonl is missing; treating as v2.0 ---"
+      fi
+      if [[ "${needs_shim}" == "true" ]]; then
         echo "--- v2.0 -> v2.1 shim ---"
         python "${SCRIPT_DIR}/tools/convert_v20_to_v21_local.py" \
           --root "${dataset_path}" \
           --num-workers "${V20_SHIM_NUM_WORKERS}" \
           --video-sample-frames "${V20_SHIM_VIDEO_SAMPLE_FRAMES}" \
-          --video-backend pyav
+          --video-backend pyav \
+          "${shim_force[@]+"${shim_force[@]}"}"
         shim_status=$?
         if [[ ${shim_status} -ne 0 ]]; then
           exit "${shim_status}"
@@ -111,6 +141,12 @@ convert_one() {
       if [[ ${convert_status} -ne 0 ]]; then
         exit "${convert_status}"
       fi
+    fi
+    echo "--- flatten singleton (shape [1]) columns ---"
+    python "${SCRIPT_DIR}/tools/flatten_singleton_columns.py" --root "${dataset_path}"
+    flatten_status=$?
+    if [[ ${flatten_status} -ne 0 ]]; then
+      exit "${flatten_status}"
     fi
     echo "--- ensure frame_index ---"
     python "${SCRIPT_DIR}/tools/ensure_frame_index.py" --root "${dataset_path}"

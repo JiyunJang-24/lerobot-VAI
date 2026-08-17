@@ -125,14 +125,24 @@ def _compute_one_episode_stats(
 
 
 def convert(
-    root: Path, num_workers: int = 8, video_sample_frames: int = 8, video_backend: str = "pyav"
+    root: Path,
+    num_workers: int = 8,
+    video_sample_frames: int = 8,
+    video_backend: str = "pyav",
+    force: bool = False,
 ) -> None:
     root = Path(root)
     info = load_info(root)
     version = info.get("codebase_version", "unknown")
-    if version != V20:
+    if version != V20 and not force:
         print(f"[skip] {root}: codebase_version={version!r} (expected {V20!r}); nothing to do")
         return
+    if version != V20:
+        # --force exists for exports that *declare* v2.1 but ship the v2.0 layout (no
+        # meta/episodes_stats.jsonl) -- e.g. ChiefJang/visual_robust_robocasa_x. Without the
+        # per-episode stats this generates, convert_dataset_v21_to_v30.py dies late with
+        # FileNotFoundError on meta/episodes_stats.jsonl.
+        print(f"[force] {root}: codebase_version={version!r} but proceeding with the v2.0 shim")
 
     _fix_invalid_dtype_labels(root, info)
 
@@ -191,10 +201,17 @@ if __name__ == "__main__":
         help="Video decoding backend for stats sampling (default: pyav, since torchcodec needs a "
         "matching system FFmpeg that may not be installed)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run even if codebase_version is not v2.0 -- for exports that declare v2.1 but ship "
+        "the v2.0 layout (no meta/episodes_stats.jsonl)",
+    )
     args = parser.parse_args()
     convert(
         args.root,
         num_workers=args.num_workers,
         video_sample_frames=args.video_sample_frames,
         video_backend=args.video_backend,
+        force=args.force,
     )
