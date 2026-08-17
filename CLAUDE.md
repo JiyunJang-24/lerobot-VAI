@@ -431,12 +431,42 @@ because they never attend to each other.
   parameters while the expert gets `|g| = 13.2`. Without the flag the same loss puts `|g| = 14.6`
   on the VLM — that control is in the test, since "zero gradient" is also what a broken forward
   pass produces.
+* **The CE is genuinely next-token.** `d(CE)/d(last postfix token) = 0` exactly — nothing is
+  predicted from it. An off-by-one in the shift would let every position see its own target, and
+  the loss would fall convincingly while teaching the VLM nothing; this is the check that rules
+  that out, and it is worth keeping.
+* **The masks say what the design claims**, read off the tensor the model actually passes to the
+  transformer: expert → postfix blind, core prefix → postfix blind (so the features the expert
+  reads are unchanged by the postfix), postfix causal and able to read the core, and the suffix's
+  position ids and suffix → core mask identical to a forward without a postfix.
+* **The two losses own disjoint parameters**: CE-only 239, flow-only 45, both 0, neither 0.
 * The CE trains the VLM including `lm_head` and the vision tower.
 * Overfitting one synthetic batch: CE 45.1 → 0.016, token accuracy 0 → 1.00 in 150 steps.
 
 Real data, barx front-only, batch 64 x 2 GPUs, 300 steps: CE **9.50 → 5.62**, token accuracy
 0.068, `fast_tokens_mean` **172** ids per 50x12 chunk (max 243, nothing truncated at the 256 cap),
 flow-matching loss 0.22-0.25. Both terms move; nothing NaNs; checkpointing works.
+
+### Three consequences of the disjoint parameter split
+
+**`ki_fast_loss_weight` is close to a no-op.** Because the two losses reach disjoint parameters,
+it is only a scale on the VLM branch's gradient — and AdamW's update `m̂/(√v̂ + eps)` is invariant
+to a constant gradient scale. To actually tune how fast the VLM learns relative to the expert, give
+it its own `add_param_group` learning rate; changing this weight will do almost nothing.
+
+**`state_proj` is now trained by the CE only.** It feeds the VLM prefix, so the stop-gradient cuts
+it off from the flow-matching term. That is the correct reading of pi_0.5 — state is part of what
+the VLM sees — but it does mean the action expert's only view of the state is through detached
+prefix K/V.
+
+**Global gradient clipping briefly couples them anyway.** `optimizer_grad_clip_norm=10` is applied
+across the whole model, and the CE pushes the total norm to 22-37 for the first ~1k steps
+(baseline: 1-3, never clipped), so everything including the expert gets scaled down together.
+Uniform scaling plus Adam's scale invariance makes this second-order, and by step ~2k the norm is
+back to 3-5 and clipping stops firing. Worth knowing, not worth fixing.
+
+**Compare `flow_matching_loss`, not `loss`.** The logged `loss` is now flow + CE and is dominated
+by the CE (~4.5 vs ~0.17), so it is not comparable to the section-4 numbers.
 
 ### Cost — this is the part that changes how you launch it
 

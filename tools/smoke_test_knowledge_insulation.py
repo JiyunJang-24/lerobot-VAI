@@ -6,7 +6,7 @@ Run before any long job:
     source /home/gpuuser/miniforge3/etc/profile.d/conda.sh && conda activate smolvla
     python tools/smoke_test_knowledge_insulation.py
 
-Eight checks, in the order they can break:
+Ten checks, in the order they can break:
 
   1. FAST tokenization round-trips through the LM vocabulary mapping.
   2. Insulation does not change the action expert: the split attention matches the stock joint
@@ -17,8 +17,12 @@ Eight checks, in the order they can break:
      expert.
   5. The FAST cross-entropy alone DOES put gradient on the VLM (including `lm_head`, which is
      frozen without this flag).
-  6. The cross-entropy actually falls when optimized on a fixed batch.
-  7. Sampling still works with the flag on, so the checkpoint can be evaluated.
+  6. The cross-entropy predicts the NEXT token — an off-by-one would let each position see its
+     own target, and the loss would fall convincingly while teaching nothing.
+  7. The attention mask and position ids match the design, read off the real forward call.
+  8. The two losses own disjoint parameter sets, with nothing left untrained.
+  9. The cross-entropy actually falls when optimized on a fixed batch.
+ 10. Sampling still works with the flag on, so the checkpoint can be evaluated.
 
 Synthetic data throughout: this tests the mechanism, not the corpus.
 """
@@ -134,6 +138,48 @@ def patched_postfix_embedding(model, postfix_tokens):
         yield delta
     finally:
         model.vlm_with_expert.embed_language_tokens = original
+
+
+@contextlib.contextmanager
+def capture_vlm_forward(model):
+    """Record the attention mask and position ids the model actually hands the transformer."""
+    original = model.vlm_with_expert.forward
+    captured = {}
+
+    def patched(**kwargs):
+        captured["attention_mask"] = kwargs["attention_mask"]
+        captured["position_ids"] = kwargs["position_ids"]
+        return original(**kwargs)
+
+    model.vlm_with_expert.forward = patched
+    try:
+        yield captured
+    finally:
+        model.vlm_with_expert.forward = original
+
+
+def partition_by_gradient(model, batch, postfix):
+    """Split trainable parameters by which of the two losses actually reaches them."""
+
+    def touched(loss_fn):
+        model.zero_grad(set_to_none=True)
+        flow, aux = run_forward(model, batch, postfix)
+        loss_fn(flow, aux).backward()
+        return {
+            n
+            for n, p in model.named_parameters()
+            if p.requires_grad and p.grad is not None and p.grad.abs().sum() > 0
+        }
+
+    flow_touched = touched(lambda flow, aux: flow.mean())
+    ce_touched = touched(lambda flow, aux: aux["fast_ce_loss"])
+    trainable = {n for n, p in model.named_parameters() if p.requires_grad}
+    return (
+        flow_touched - ce_touched,
+        ce_touched - flow_touched,
+        flow_touched & ce_touched,
+        trainable - flow_touched - ce_touched,
+    )
 
 
 def vlm_parameters(model):
@@ -257,7 +303,79 @@ def main():
         f"|g_vlm| = {vlm_g:.3e}, |g_vision| = {vision_g:.3e}, lm_head.requires_grad={lm_head.requires_grad}",
     )
 
-    # ---- 6. the cross-entropy falls ----------------------------------------------------------
+    # ---- 6. the cross-entropy is genuinely next-token ----------------------------------------
+    # An off-by-one in the shift would let each position see the token it is asked to predict.
+    # The CE would then collapse to ~0 within a few steps and look like spectacular learning while
+    # teaching the VLM nothing. Exact test: with a correct shift, the embedding of postfix token j
+    # can only influence the predictions of tokens after j — so the LAST postfix token, which
+    # nothing follows, must have exactly zero gradient, while the first must have some.
+    with patched_postfix_embedding(ki, postfix["tokens"]) as delta_leaf:
+        _, aux = run_forward(ki, batch, postfix)
+        (ce_grad,) = torch.autograd.grad(aux["fast_ce_loss"], delta_leaf)
+    last_real = postfix["pad_masks"][0].nonzero()[-1].item()
+    self_leak = ce_grad[0, last_real].abs().max().item()
+    first_dep = ce_grad[0, 0].abs().max().item()
+    report(
+        "cross-entropy predicts the NEXT token, not the current one",
+        self_leak == 0.0 and first_dep > 0.0,
+        f"d(ce)/d(last postfix token) = {self_leak:.3e} (must be 0 — nothing is predicted from it), "
+        f"d(ce)/d(first) = {first_dep:.3e}",
+    )
+
+    # ---- 7. the masks say what the design claims ---------------------------------------------
+    # Read off the tensor the model actually passes to the transformer, not a re-derivation.
+    with capture_vlm_forward(ki) as captured:
+        run_forward(ki, batch, postfix)
+        with_postfix = dict(captured)
+    with capture_vlm_forward(ki) as captured:
+        run_forward(ki, batch)
+        without_postfix = dict(captured)
+
+    mask = with_postfix["attention_mask"]
+    postfix_len = postfix["tokens"].shape[1]
+    total_len = mask.shape[1]
+    suffix_len = CHUNK
+    prefix_len = total_len - suffix_len
+    core_len = prefix_len - postfix_len
+    post = slice(core_len, prefix_len)
+
+    expert_blind = not mask[:, prefix_len:, post].any()
+    core_blind = not mask[:, :core_len, post].any()
+    postfix_block = mask[:, post, post]
+    causal = torch.tril(torch.ones_like(postfix_block[0]))
+    postfix_causal = bool((postfix_block[0].float() <= causal).all())
+    postfix_reads_core = bool(mask[:, post, :core_len].any())
+    suffix_pos_same = torch.equal(
+        with_postfix["position_ids"][:, prefix_len:], without_postfix["position_ids"][:, core_len:]
+    )
+    suffix_core_same = torch.equal(
+        with_postfix["attention_mask"][:, prefix_len:, :core_len],
+        without_postfix["attention_mask"][:, core_len:, :core_len],
+    )
+    report(
+        "attention mask and position ids match the design",
+        expert_blind and core_blind and postfix_causal and postfix_reads_core and suffix_pos_same
+        and suffix_core_same,
+        f"expert->postfix blind={expert_blind}, core->postfix blind={core_blind}, "
+        f"postfix causal={postfix_causal} reads core={postfix_reads_core}, "
+        f"suffix position ids unchanged={suffix_pos_same}, suffix->core mask unchanged={suffix_core_same}",
+    )
+
+    # ---- 8. the two objectives own disjoint parameters ----------------------------------------
+    flow_only, ce_only, both, neither = partition_by_gradient(ki, batch, postfix)
+    expected_ce = ("vlm_with_expert.vlm", "state_proj")
+    expected_flow = ("lm_expert", "action_in_proj", "action_out_proj", "action_time_mlp")
+    ce_ok = all(any(k in n for k in expected_ce) for n in ce_only)
+    flow_ok = all(any(k in n for k in expected_flow) for n in flow_only)
+    report(
+        "each loss trains exactly the parameters it should",
+        ce_ok and flow_ok and not both and not neither,
+        f"CE-only {len(ce_only)}, flow-only {len(flow_only)}, both {len(both)}, neither {len(neither)}"
+        + (f"  BOTH: {sorted(both)[:3]}" if both else "")
+        + (f"  NEITHER (DDP unused): {sorted(neither)[:3]}" if neither else ""),
+    )
+
+    # ---- 9. the cross-entropy falls ----------------------------------------------------------
     optimizer = torch.optim.AdamW(
         [p for p in ki.parameters() if p.requires_grad], lr=args.ce_lr, weight_decay=0.0
     )
@@ -278,7 +396,7 @@ def main():
         f"{first:.4f} -> {last:.4f} in {args.ce_steps} steps, token_acc {history[0][1]:.3f} -> {history[-1][1]:.3f}",
     )
 
-    # ---- 7. inference is untouched -----------------------------------------------------------
+    # ---- 10. inference is untouched -----------------------------------------------------------
     # The postfix exists only during training; sampling must still run, and run identically, or a
     # knowledge-insulated checkpoint cannot be evaluated.
     ki.eval()
