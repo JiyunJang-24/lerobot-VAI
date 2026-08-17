@@ -354,3 +354,59 @@ outputs/siglip_feature_analysis/         gap figures + info.txt (read this)
 ```
 
 tmux sessions used: `smolvla`, `smolvla_distill`, `smolvla_eef`.
+
+---
+
+## 8. IN PROGRESS — knowledge insulation (branch `feat/knowledge-insulation`)
+
+Goal (π₀.₅): the flow-matching loss must not reach the VLM (stop-gradient), and the VLM is
+instead trained to predict FAST-tokenized actions with its own LM head.
+
+### Verified so far
+
+* `pip install scipy` is required — without it `AutoProcessor.from_pretrained(
+  "physical-intelligence/fast", trust_remote_code=True)` raises ImportError. Now installed.
+* FAST tokenizer works: a `[1, 50, 12]` action chunk → **424 tokens, ids 265–1974** (variable
+  length; it is a compression-based tokenizer, so length depends on the chunk).
+* openpi's convention (`src/openpi/models/tokenizer.py::FASTTokenizer`):
+  `prefix = "Task: {text}, State: {state discretized to 256 bins};\n"`,
+  `postfix = "Action: " + fast_tokens + "|"` with EOS; loss on the postfix only; AR mask 0 on
+  prefix (bidirectional) and 1 on postfix (causal). Action tokens are mapped into the last part
+  of the LM vocab, skipping the final 128 special tokens.
+* **openpi does not contain the KI training path itself** — its README states only the flow
+  matching head is supported for π₀.₅. The FAST tokenizer is there for π₀-FAST. The combination
+  has to be written here.
+
+### Two blockers found while placing the stop-gradient
+
+1. **`lm_head` is deliberately frozen.** `smolvlm_with_expert.py::set_requires_grad()` puts
+   `lm_head`, `text_model.model.norm.weight` and the last text layers in `frozen_layers` to
+   avoid DDP unused-parameter errors. The FAST objective needs `lm_head` trainable, so that
+   original reason has to be handled again (it is reachable from the VLM forward once a CE loss
+   exists, so it should be fine — but it must be verified, not assumed).
+
+2. **The self-attention layers make a clean detach non-trivial.** With
+   `attention_mode="cross_attn"` and `self_attn_every_n_layers=2`:
+   * odd layers → `forward_cross_attn_layer`, the expert explicitly reads prefix K/V. A
+     `.detach()` on that K/V is a clean one-line insulation.
+   * even layers → `forward_attn_layer`, which concatenates prefix and suffix into ONE attention
+     (`query_states = cat([prefix_q, suffix_q])`, same for K/V). Detaching the prefix K/V there
+     would also cut the VLM's own internal gradient, which is wrong — insulation must block the
+     action→VLM path only, not the VLM→VLM path. This layer needs the attention split (prefix
+     queries over undetached prefix K/V, suffix queries over detached prefix K/V) rather than a
+     single detach.
+
+### Remaining steps
+
+3. add `--policy.knowledge_insulation` to `configuration_smolvla.py`
+4. insulate: one-line detach in `forward_cross_attn_layer`; split attention in
+   `forward_attn_layer` as described above
+5. allow `lm_head` + final text layers to train when the flag is set
+6. FAST tokenization in the data path + CE loss on the postfix, following openpi's convention
+7. smoke test that must check BOTH: (a) VLM params receive no gradient from the flow-matching
+   term alone, (b) the CE loss actually falls
+8. full run
+
+Do not run a stop-gradient-only variant and call it knowledge insulation: with no FAST objective
+the VLM receives no gradient at all, which reproduces the existing `frozen encoder` result
+(action loss 0.092) under a misleading name.
