@@ -65,6 +65,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.fast_action_tokenizer import FASTActionTokenizer
+from lerobot.policies.smolvla.language_action_text import LanguageActionTokenizer
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.policies.utils import (
     populate_queues,
@@ -395,11 +396,11 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("actions_id_pad")
         loss_dict = {}
-        fast_postfix = self.prepare_fast_postfix(batch, actions_is_pad)
+        fast_postfix = self.prepare_postfix(batch, actions_is_pad)
         if fast_postfix is not None and reduction == "none":
             raise NotImplementedError(
                 "RA-BC per-sample weighting and knowledge insulation are not combined yet: the "
-                "FAST cross-entropy is a scalar over tokens, not a per-sample loss."
+                "token cross-entropy is a scalar over tokens, not a per-sample loss."
             )
         losses, aux = self.model.forward(
             images, img_masks, lang_tokens, lang_masks, state, actions, noise, time, fast_postfix
@@ -424,9 +425,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
             loss = losses.mean()
             loss_dict["flow_matching_loss"] = loss.item()
             if aux:
-                ce = aux.pop("fast_ce_loss")
-                loss = loss + self.config.ki_fast_loss_weight * ce
-                loss_dict["fast_ce_loss"] = ce.item()
+                ce = aux.pop("token_ce_loss")
+                loss = loss + self.config.ki_token_loss_weight * ce
+                loss_dict["token_ce_loss"] = ce.item()
                 loss_dict.update(aux)
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
@@ -511,15 +512,21 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
-    def prepare_fast_postfix(self, batch, actions_is_pad=None):
-        """FAST-tokenize the action chunk into the LM postfix (knowledge insulation only)."""
+    def prepare_postfix(self, batch, actions_is_pad=None):
+        """Turn the action chunk into the LM postfix the VLM is trained to predict."""
         if not self.config.knowledge_insulation:
             return None
         # Tokenize the true action dimensions, not the 32-d zero padding: padding the chunk out
         # roughly triples the token count for no added information.
         action_dim = self.config.action_feature.shape[0]
         raw_actions = batch[ACTION][..., :action_dim]
-        postfix = self.model.fast_tokenizer.encode(raw_actions)
+        if self.config.ki_objective == "lap":
+            # The sentence describes physical directions, so it has to be built from the raw
+            # command, not the mean/std-normalized one. Summing normalized actions over 50 steps
+            # adds 50*mean/std to every axis -- on this corpus that offset is ~30 units, an order
+            # of magnitude larger than the motion itself, so every label would point the same way.
+            raw_actions = self.model.unnormalize_actions(raw_actions)
+        postfix = self.model.postfix_tokenizer.encode(raw_actions)
         if actions_is_pad is not None:
             # A chunk that runs past the end of its episode is padded with repeated frames; it
             # would be tokenized as if it were real. Drop those samples from the token loss (the
@@ -694,15 +701,31 @@ class VLAFlowMatching(nn.Module):
             visual_cue_mode=self.config.visual_cue_mode,
             knowledge_insulation=self.config.knowledge_insulation,
         )
-        self.fast_tokenizer = None
+        self.postfix_tokenizer = None
         if self.config.knowledge_insulation:
-            self.fast_tokenizer = FASTActionTokenizer(
-                text_tokenizer=self.vlm_with_expert.processor.tokenizer,
-                vocab_size=self.vlm_with_expert.config.text_config.vocab_size,
-                tokenizer_path=self.config.ki_fast_tokenizer_path,
-                skip_tokens=self.config.ki_fast_skip_tokens,
-                max_tokens=self.config.ki_fast_max_tokens,
-            )
+            if self.config.ki_objective == "fast":
+                self.postfix_tokenizer = FASTActionTokenizer(
+                    text_tokenizer=self.vlm_with_expert.processor.tokenizer,
+                    vocab_size=self.vlm_with_expert.config.text_config.vocab_size,
+                    tokenizer_path=self.config.ki_fast_tokenizer_path,
+                    skip_tokens=self.config.ki_fast_skip_tokens,
+                    max_tokens=self.config.ki_max_tokens,
+                )
+            else:
+                self.postfix_tokenizer = LanguageActionTokenizer(
+                    text_tokenizer=self.vlm_with_expert.processor.tokenizer,
+                    translation_dims=self.config.lap_translation_dims,
+                    rotation_dims=self.config.lap_rotation_dims,
+                    gripper_dim=self.config.lap_gripper_dim,
+                    gripper_close_is_positive=self.config.lap_gripper_close_is_positive,
+                    include_rotation=self.config.lap_include_rotation,
+                    style=self.config.lap_style,
+                    translation_thresholds=self.config.lap_translation_thresholds,
+                    rotation_thresholds=self.config.lap_rotation_thresholds,
+                    idle_threshold=self.config.lap_idle_threshold,
+                    cm_per_unit=self.config.lap_cm_per_unit,
+                    max_tokens=self.config.ki_max_tokens,
+                )
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
         )
@@ -734,6 +757,29 @@ class VLAFlowMatching(nn.Module):
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
             params.requires_grad = self.config.train_state_proj
+
+    def set_action_stats(self, mean, std):
+        """Give the model the action mean/std so the LAP objective can undo normalization.
+
+        Kept as plain tensors rather than buffers: they are training-side metadata for building
+        labels, and registering them would change every checkpoint's state_dict.
+        """
+        self._action_mean = torch.as_tensor(mean, dtype=torch.float32)
+        self._action_std = torch.as_tensor(std, dtype=torch.float32)
+
+    def unnormalize_actions(self, actions: Tensor) -> Tensor:
+        mean = getattr(self, "_action_mean", None)
+        std = getattr(self, "_action_std", None)
+        if mean is None or std is None:
+            raise RuntimeError(
+                "The LAP objective needs the action mean/std to rebuild the raw command before "
+                "describing it in words. Call `policy.model.set_action_stats(...)` after building "
+                "the policy (the training script does this from `ds_meta.stats['action']`)."
+            )
+        dim = actions.shape[-1]
+        mean = mean[:dim].to(device=actions.device, dtype=actions.dtype)
+        std = std[:dim].to(device=actions.device, dtype=actions.dtype)
+        return actions * std + mean
 
     def sample_noise(self, shape, device):
         noise = torch.normal(
@@ -922,7 +968,7 @@ class VLAFlowMatching(nn.Module):
     ) -> tuple[Tensor, dict]:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors).
 
-        With `fast_postfix` (knowledge insulation) the returned dict also carries the FAST
+        With `fast_postfix` (knowledge insulation) the returned dict also carries the postfix
         token cross-entropy, which is the only gradient the VLM receives.
         """
         if noise is None:
@@ -988,11 +1034,11 @@ class VLAFlowMatching(nn.Module):
 
         aux = {}
         if fast_postfix is not None:
-            aux.update(self.fast_token_loss(prefix_out, fast_postfix, core_len, prefix_len))
+            aux.update(self.postfix_token_loss(prefix_out, fast_postfix, core_len, prefix_len))
         return losses, aux
 
-    def fast_token_loss(self, prefix_out, fast_postfix, core_len, prefix_len) -> dict:
-        """Next-token cross-entropy over the FAST postfix — the VLM's own training signal."""
+    def postfix_token_loss(self, prefix_out, fast_postfix, core_len, prefix_len) -> dict:
+        """Next-token cross-entropy over the postfix — the VLM's own training signal."""
         loss_masks = fast_postfix["loss_masks"]
         # Hidden state at t predicts token t+1, so the postfix targets are read off the positions
         # shifted one to the left. Position `core_len - 1` is the state token, always unpadded.
@@ -1012,11 +1058,21 @@ class VLAFlowMatching(nn.Module):
         if empty:
             ce = ce * 0.0
         with torch.no_grad():
-            accuracy = (logits.argmax(dim=-1) == targets).float().mean()
+            correct = logits.argmax(dim=-1) == targets
+            accuracy = correct.float().mean()
+            content_accuracy = None
+            content_masks = fast_postfix.get("content_masks")
+            if content_masks is not None and not empty:
+                # Restricted to the direction and magnitude words: the rest of a LAP sentence is
+                # scaffolding the model learns immediately, and averaging it in hides the signal.
+                content = content_masks[loss_masks]
+                if content.any():
+                    content_accuracy = correct[content].float().mean().item()
         return {
-            "fast_ce_loss": ce,
-            "fast_token_accuracy": accuracy.item(),
-            "fast_postfix_len": float(fast_postfix["tokens"].shape[1]),
+            "token_ce_loss": ce,
+            "token_accuracy": accuracy.item(),
+            **({} if content_accuracy is None else {"token_content_accuracy": content_accuracy}),
+            "postfix_len": float(fast_postfix["tokens"].shape[1]),
             **fast_postfix["stats"],
         }
 

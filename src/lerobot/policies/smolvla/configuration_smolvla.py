@@ -112,14 +112,47 @@ class SmolVLAConfig(PreTrainedConfig):
     #   * the VLM is instead trained to predict the FAST-tokenized action chunk with its LM head.
     # Enabling the stop-gradient without the token objective would simply freeze the VLM.
     knowledge_insulation: bool = False
+    # What the VLM is asked to predict:
+    #   "fast" — the FAST-tokenized action chunk (pi_0.5 knowledge insulation)
+    #   "lap"  — an English sentence describing the chunk ("move forward moderately, ...", LAP)
+    ki_objective: str = "fast"
+    ki_token_loss_weight: float = 1.0
+    # Cap on the postfix length (prompt + tokens + eos). Bounds both the VLM sequence length and
+    # the (batch, len, vocab) logits tensor. FAST: ~170 ids per 50x12 chunk. LAP: ~20.
+    ki_max_tokens: int = 256
+
     ki_fast_tokenizer_path: str = "physical-intelligence/fast"
-    ki_fast_loss_weight: float = 1.0
-    # Cap on the postfix length (prompt + FAST ids + eos). Bounds both the VLM sequence length and
-    # the (batch, len, vocab) logits tensor. Smooth 12-d chunks tokenize to ~50-150 ids.
-    ki_fast_max_tokens: int = 256
     # Number of special tokens at the end of the LM vocabulary that action ids must not collide
     # with (openpi's `_fast_skip_tokens`).
     ki_fast_skip_tokens: int = 128
+
+    # --- LAP objective -------------------------------------------------------------------------
+    # Which action dimensions carry what. Defaults are this corpus's RoboCasa layout, recovered
+    # from the data (see CLAUDE.md section 8): base(0:3), torso(3), mode(4), arm xyz(5:8),
+    # arm rotation(8:11), gripper(11). The `barx_action_layout` string in the source export's
+    # metadata says "arm_gripper_base_torso_mode_v1" and is WRONG for this export.
+    lap_translation_dims: tuple[int, int, int] = (5, 6, 7)
+    lap_rotation_dims: tuple[int, int, int] = (8, 9, 10)
+    lap_gripper_dim: int = 11
+    # +1 closes the gripper here (robosuite GRIP convention, confirmed on PnP episodes: the sign
+    # flips to +1 at the grasp and back to -1 at the release). LAP's own code assumes the opposite.
+    lap_gripper_close_is_positive: bool = True
+    # Off, like LAP's own default: rotation is the noisy part of this corpus (std 0.06 against
+    # 0.2-0.5 for translation) and mentioning all three axes every time buries the motion.
+    lap_include_rotation: bool = False
+    # "rough": "move forward moderately"; "numeric": "move forward 6.4 units" (or cm, below).
+    lap_style: str = "rough"
+    # Magnitude buckets for |sum over the chunk|, in action units. Defaults are this corpus's 33rd
+    # and 66th percentiles, measured over all three embodiments.
+    lap_translation_thresholds: tuple[float, float] = (4.7, 10.7)
+    lap_rotation_thresholds: tuple[float, float] = (0.33, 1.10)
+    # Below this the axis is not mentioned at all.
+    lap_idle_threshold: float = 0.25
+    # Set > 0 to phrase magnitudes in centimetres instead of action units. Deliberately off by
+    # default: this corpus's actions are OSC servo targets, not displacements, so no single scale
+    # converts them honestly — the achieved cm per summed unit measured 1.04 (ur5e), 0.43-0.63
+    # (iiwa) and 0.32-0.65 (panda, with the z axis not identifiable at all).
+    lap_cm_per_unit: float = 0.0
 
     def __post_init__(self):
         super().__post_init__()
@@ -135,12 +168,19 @@ class SmolVLAConfig(PreTrainedConfig):
                 "`knowledge_insulation` trains the VLM through the FAST token objective, which "
                 "`train_expert_only=True` freezes. Pass --policy.train_expert_only=false."
             )
-        if self.knowledge_insulation and self.ki_fast_loss_weight <= 0:
+        if self.knowledge_insulation and self.ki_token_loss_weight <= 0:
             raise ValueError(
-                "`knowledge_insulation` with `ki_fast_loss_weight <= 0` stops the flow-matching "
+                "`knowledge_insulation` with `ki_token_loss_weight <= 0` stops the flow-matching "
                 "gradient into the VLM without putting anything in its place, which is just a "
                 "frozen VLM under a misleading name."
             )
+        if self.knowledge_insulation and self.ki_objective not in ("fast", "lap"):
+            raise ValueError(f"`ki_objective` must be 'fast' or 'lap', got {self.ki_objective!r}.")
+        if self.knowledge_insulation and self.ki_objective == "lap" and self.lap_style not in (
+            "rough",
+            "numeric",
+        ):
+            raise ValueError(f"`lap_style` must be 'rough' or 'numeric', got {self.lap_style!r}.")
         if self.use_delta_joint_actions_aloha:
             raise NotImplementedError(
                 "`use_delta_joint_actions_aloha` is used by smolvla for aloha real models. It is not ported yet in LeRobot."

@@ -317,47 +317,28 @@ class SmolVLMWithExpertModel(nn.Module):
 
         attention_interface = self.get_attention_interface()
 
-        insulate = (
-            self.knowledge_insulation
-            and len(inputs_embeds) == 2
-            and inputs_embeds[0] is not None
-            and inputs_embeds[1] is not None
+        # This layer runs prefix (VLM) and suffix (action expert) through ONE attention, so a plain
+        # `.detach()` on the key/value states would also cut the VLM's own internal gradient.
+        # `insulate_prefix_len` tells the attention to cut only the action -> VLM half of it.
+        insulate_prefix_len = (
+            inputs_embeds[0].shape[1]
+            if (
+                self.knowledge_insulation
+                and len(inputs_embeds) == 2
+                and inputs_embeds[0] is not None
+                and inputs_embeds[1] is not None
+            )
+            else None
         )
-        if insulate:
-            # This layer runs prefix (VLM) and suffix (action expert) through ONE attention, so a
-            # `.detach()` on the key/value states would also cut the VLM's own internal gradient.
-            # Insulation must block action -> VLM only, so the attention is split instead:
-            #   * prefix queries attend over UNdetached prefix key/values (VLM -> VLM survives),
-            #   * suffix queries attend over DETACHED prefix key/values plus their own.
-            # The result is numerically identical to the joint attention: prefix rows can never
-            # reach suffix columns anyway (their `att_masks` cumsum is strictly smaller), so
-            # restricting the prefix block drops only already-masked entries.
-            prefix_len = inputs_embeds[0].shape[1]
-            prefix_q, suffix_q = query_states[:, :prefix_len], query_states[:, prefix_len:]
-            prefix_k, suffix_k = key_states[:, :prefix_len], key_states[:, prefix_len:]
-            prefix_v, suffix_v = value_states[:, :prefix_len], value_states[:, prefix_len:]
-
-            prefix_att_output = attention_interface(
-                attention_mask_[:, :prefix_len, :prefix_len],
-                batch_size,
-                head_dim,
-                prefix_q,
-                prefix_k,
-                prefix_v,
-            )
-            suffix_att_output = attention_interface(
-                attention_mask_[:, prefix_len:, :],
-                batch_size,
-                head_dim,
-                suffix_q,
-                torch.cat([prefix_k.detach(), suffix_k], dim=1),
-                torch.cat([prefix_v.detach(), suffix_v], dim=1),
-            )
-            att_output = torch.cat([prefix_att_output, suffix_att_output], dim=1)
-        else:
-            att_output = attention_interface(
-                attention_mask_, batch_size, head_dim, query_states, key_states, value_states
-            )
+        att_output = attention_interface(
+            attention_mask_,
+            batch_size,
+            head_dim,
+            query_states,
+            key_states,
+            value_states,
+            insulate_prefix_len=insulate_prefix_len,
+        )
         return [att_output], past_key_values
 
     def forward_cross_attn_layer(
@@ -597,7 +578,14 @@ class SmolVLMWithExpertModel(nn.Module):
         return attention_interface
 
     def eager_attention_forward(
-        self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
+        self,
+        attention_mask,
+        batch_size,
+        head_dim,
+        query_states,
+        key_states,
+        value_states,
+        insulate_prefix_len: int | None = None,
     ):
         num_att_heads = self.num_attention_heads
         num_key_value_heads = self.num_key_value_heads
@@ -627,6 +615,16 @@ class SmolVLMWithExpertModel(nn.Module):
         key_states = key_states.transpose(1, 2)
 
         att_weights = torch.matmul(query_states, key_states.transpose(2, 3))
+        if insulate_prefix_len is not None:
+            # Knowledge insulation, following LAP's `stop_action_to_vlm_grad`: keep the one joint
+            # attention and overwrite just the block where suffix (action expert) queries read
+            # prefix (VLM) keys, recomputing it against detached keys. Everything else — including
+            # the VLM's own prefix-to-prefix block — keeps its gradient.
+            prefix_len = insulate_prefix_len
+            att_weights[:, :, prefix_len:, :prefix_len] = torch.matmul(
+                query_states[:, :, prefix_len:],
+                key_states[:, :, :prefix_len].detach().transpose(2, 3),
+            )
         att_weights *= head_dim**-0.5
 
         att_weights = att_weights.to(dtype=torch.float32)
@@ -635,7 +633,23 @@ class SmolVLMWithExpertModel(nn.Module):
         probs = nn.functional.softmax(masked_att_weights, dim=-1)
         probs = probs.to(dtype=value_states.dtype)
 
-        att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
+        value_states = value_states.permute(0, 2, 1, 3)
+        if insulate_prefix_len is not None:
+            # Same cut on the value side: what the suffix reads out of the prefix is detached, what
+            # it reads out of itself is not. The prefix rows use the undetached values throughout —
+            # their weight on the suffix columns is exactly zero, since the mask sends those logits
+            # to `big_neg` and softmax returns a hard 0 there.
+            prefix_len = insulate_prefix_len
+            att_output = torch.cat(
+                [
+                    torch.matmul(probs[:, :, :prefix_len], value_states),
+                    torch.matmul(probs[:, :, prefix_len:, :prefix_len], value_states[:, :, :prefix_len].detach())
+                    + torch.matmul(probs[:, :, prefix_len:, prefix_len:], value_states[:, :, prefix_len:]),
+                ],
+                dim=2,
+            )
+        else:
+            att_output = torch.matmul(probs, value_states)
 
         att_output = att_output.permute(0, 2, 1, 3)
         # we use -1 because sequence length can change

@@ -6,16 +6,18 @@ Run before any long job:
     source /home/gpuuser/miniforge3/etc/profile.d/conda.sh && conda activate smolvla
     python tools/smoke_test_knowledge_insulation.py
 
-Ten checks, in the order they can break:
+Runs the whole battery once per objective (`--objective fast|lap|both`):
 
-  1. FAST tokenization round-trips through the LM vocabulary mapping.
-  2. Insulation does not change the action expert: the split attention matches the stock joint
-     attention to bf16 precision.
+  1. The label survives the trip into token ids — FAST decodes back to the chunk; LAP's sentence
+     decodes back to itself, and the un-normalization that makes it physically meaningful is
+     present and correct.
+  2. Insulation does not change the action expert: the insulated attention matches the stock
+     joint attention to bf16 precision.
   3. The postfix is invisible to the action expert: the flow-matching loss has exactly zero
      gradient w.r.t. the ground-truth action tokens (no label leakage).
   4. The flow-matching loss alone puts NO gradient on any VLM parameter, and still trains the
      expert.
-  5. The FAST cross-entropy alone DOES put gradient on the VLM (including `lm_head`, which is
+  5. The token cross-entropy alone DOES put gradient on the VLM (including `lm_head`, which is
      frozen without this flag).
   6. The cross-entropy predicts the NEXT token — an off-by-one would let each position see its
      own target, and the loss would fall convincingly while teaching nothing.
@@ -51,7 +53,7 @@ def report(name, ok, detail=""):
     print(f"[{PASS if ok else FAIL}] {name}{'  ' + detail if detail else ''}")
 
 
-def build_model(knowledge_insulation, device, num_layers, seed=0):
+def build_model(knowledge_insulation, device, num_layers, objective="fast", seed=0):
     torch.manual_seed(seed)
     config = SmolVLAConfig(
         chunk_size=CHUNK,
@@ -63,6 +65,7 @@ def build_model(knowledge_insulation, device, num_layers, seed=0):
         train_expert_only=False,
         load_vlm_weights=True,
         knowledge_insulation=knowledge_insulation,
+        ki_objective=objective,
         tokenizer_max_length=16,
     )
     config.device = device
@@ -172,7 +175,7 @@ def partition_by_gradient(model, batch, postfix):
         }
 
     flow_touched = touched(lambda flow, aux: flow.mean())
-    ce_touched = touched(lambda flow, aux: aux["fast_ce_loss"])
+    ce_touched = touched(lambda flow, aux: aux["token_ce_loss"])
     trainable = {n for n, p in model.named_parameters() if p.requires_grad}
     return (
         flow_touched - ce_touched,
@@ -198,36 +201,63 @@ def grad_norm(params):
     return total**0.5
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--num-layers", type=int, default=4, help="Truncated VLM depth, for speed.")
-    parser.add_argument("--ce-steps", type=int, default=150)
-    parser.add_argument("--ce-lr", type=float, default=3e-4)
-    args = parser.parse_args()
+def run_checks(objective, args):
     device = args.device
+    print(f"\n{'=' * 78}\nobjective = {objective}\n{'=' * 78}")
 
-    print(f"device={device} num_vlm_layers={args.num_layers}\n")
-
-    ki = build_model(True, device, args.num_layers)
+    ki = build_model(True, device, args.num_layers, objective)
     batch = make_batch(ki, device)
-    postfix = ki.fast_tokenizer.encode(batch["raw_actions"])
+    postfix = ki.postfix_tokenizer.encode(batch["raw_actions"])
 
-    # ---- 1. tokenizer round-trip -------------------------------------------------------------
-    decoded = ki.fast_tokenizer.decode(postfix["tokens"], postfix["loss_masks"], CHUNK, ACTION_DIM)
-    decoded = torch.as_tensor(decoded, device=device, dtype=torch.float32)
-    err = (decoded - batch["raw_actions"]).abs().max().item()
-    report(
-        "FAST tokens round-trip through the LM vocab",
-        err < 0.1,
-        f"max |a - decode(encode(a))| = {err:.4f}, "
-        f"postfix len {postfix['tokens'].shape[1]} (mean {postfix['stats']['fast_tokens_mean']:.1f} FAST ids)",
-    )
+    # ---- 1. the label survives the trip into token ids ----------------------------------------
+    if objective == "fast":
+        decoded = ki.postfix_tokenizer.decode(postfix["tokens"], postfix["loss_masks"], CHUNK, ACTION_DIM)
+        decoded = torch.as_tensor(decoded, device=device, dtype=torch.float32)
+        err = (decoded - batch["raw_actions"]).abs().max().item()
+        report(
+            "FAST tokens round-trip through the LM vocab",
+            err < 0.1,
+            f"max |a - decode(encode(a))| = {err:.4f}, postfix len {postfix['tokens'].shape[1]} "
+            f"(mean {postfix['stats']['fast_tokens_mean']:.1f} FAST ids)",
+        )
+    else:
+        tokenizer = ki.vlm_with_expert.processor.tokenizer
+        n_prompt = len(ki.postfix_tokenizer.prompt_ids)
+        ok = True
+        for i, sentence in enumerate(postfix["sentences"]):
+            ids = postfix["tokens"][i][postfix["loss_masks"][i]][:-1]  # drop the eos
+            ok = ok and tokenizer.decode(ids).strip() == sentence
+        report(
+            "LAP sentence round-trips through the text tokenizer",
+            ok,
+            f'"{postfix["sentences"][0]}" -> {postfix["tokens"].shape[1]} tokens '
+            f'(prompt {n_prompt} + {postfix["stats"]["lap_sentence_tokens_mean"]:.0f} + eos)',
+        )
+
+        # Labels are built from the raw command, so the un-normalization has to be there and right.
+        mean = torch.arange(ACTION_DIM, dtype=torch.float32)
+        std = torch.full((ACTION_DIM,), 2.0)
+        fresh = build_model(True, device, args.num_layers, objective, seed=1)
+        try:
+            fresh.unnormalize_actions(batch["raw_actions"])
+            raised = False
+        except RuntimeError:
+            raised = True
+        fresh.set_action_stats(mean, std)
+        restored = fresh.unnormalize_actions(batch["raw_actions"])
+        expected = batch["raw_actions"] * std.to(device) + mean.to(device)
+        report(
+            "LAP un-normalizes the action before describing it",
+            raised and torch.allclose(restored, expected, atol=1e-5),
+            f"missing stats raise={raised}, round-trip max err="
+            f"{(restored - expected).abs().max().item():.2e}",
+        )
+        del fresh
 
     # ---- 2. insulation does not move the action expert ---------------------------------------
     with torch.no_grad():
         losses_ki, _ = run_forward(ki, batch)
-    plain = build_model(False, device, args.num_layers)
+    plain = build_model(False, device, args.num_layers, objective)
     plain.load_state_dict(ki.state_dict())
     with torch.no_grad():
         losses_plain, _ = run_forward(plain, batch)
@@ -236,7 +266,7 @@ def main():
     # Loose: the split changes the reduction order of bf16 matmuls, so the two paths agree only to
     # bf16 precision. Check 3 is the exact statement.
     report(
-        "split attention reproduces the stock action path",
+        "insulated attention reproduces the stock action path",
         delta <= 5e-3 * max(scale, 1.0),
         f"max |dloss| = {delta:.2e} (loss scale {scale:.2f}, bf16)",
     )
@@ -251,7 +281,7 @@ def main():
         (leak_grad,) = torch.autograd.grad(
             flow_losses.mean(), delta_leaf, retain_graph=True, allow_unused=True
         )
-        (ce_grad,) = torch.autograd.grad(aux["fast_ce_loss"], delta_leaf, allow_unused=True)
+        (ce_grad,) = torch.autograd.grad(aux["token_ce_loss"], delta_leaf, allow_unused=True)
     leak = 0.0 if leak_grad is None else leak_grad.abs().max().item()
     ce_dep = 0.0 if ce_grad is None else ce_grad.abs().max().item()
     report(
@@ -276,7 +306,7 @@ def main():
     )
 
     # control: without the flag the same loss does reach the VLM
-    control = build_model(False, device, args.num_layers)
+    control = build_model(False, device, args.num_layers, objective)
     control.load_state_dict(ki.state_dict())
     control.zero_grad(set_to_none=True)
     losses_c, _ = run_forward(control, batch)
@@ -292,13 +322,13 @@ def main():
     # ---- 5. the token loss is what trains the VLM --------------------------------------------
     ki.zero_grad(set_to_none=True)
     _, aux = run_forward(ki, batch, postfix)
-    aux["fast_ce_loss"].backward()
+    aux["token_ce_loss"].backward()
     vlm_g = grad_norm(vlm_parameters(ki))
     lm_head = ki.vlm_with_expert.vlm.lm_head.weight
     vision = ki.vlm_with_expert.get_vlm_model().vision_model
     vision_g = grad_norm([(n, p) for n, p in vision.named_parameters() if p.requires_grad])
     report(
-        "FAST cross-entropy trains the VLM (lm_head included)",
+        "token cross-entropy trains the VLM (lm_head included)",
         vlm_g > 0.0 and lm_head.requires_grad and lm_head.grad is not None and lm_head.grad.abs().sum() > 0,
         f"|g_vlm| = {vlm_g:.3e}, |g_vision| = {vision_g:.3e}, lm_head.requires_grad={lm_head.requires_grad}",
     )
@@ -311,7 +341,7 @@ def main():
     # nothing follows, must have exactly zero gradient, while the first must have some.
     with patched_postfix_embedding(ki, postfix["tokens"]) as delta_leaf:
         _, aux = run_forward(ki, batch, postfix)
-        (ce_grad,) = torch.autograd.grad(aux["fast_ce_loss"], delta_leaf)
+        (ce_grad,) = torch.autograd.grad(aux["token_ce_loss"], delta_leaf)
     last_real = postfix["pad_masks"][0].nonzero()[-1].item()
     self_leak = ce_grad[0, last_real].abs().max().item()
     first_dep = ce_grad[0, 0].abs().max().item()
@@ -383,15 +413,15 @@ def main():
     for step in range(args.ce_steps):
         optimizer.zero_grad(set_to_none=True)
         flow, aux = run_forward(ki, batch, postfix)
-        loss = flow.mean() + aux["fast_ce_loss"]
+        loss = flow.mean() + aux["token_ce_loss"]
         loss.backward()
         optimizer.step()
-        history.append((aux["fast_ce_loss"].item(), aux["fast_token_accuracy"]))
+        history.append((aux["token_ce_loss"].item(), aux["token_accuracy"]))
         if step % 5 == 0 or step == args.ce_steps - 1:
             print(f"      step {step:3d}  ce {history[-1][0]:7.4f}  token_acc {history[-1][1]:.3f}")
     first, last = history[0][0], history[-1][0]
     report(
-        "FAST cross-entropy falls when optimized",
+        "token cross-entropy falls when optimized",
         last < first * 0.9,
         f"{first:.4f} -> {last:.4f} in {args.ce_steps} steps, token_acc {history[0][1]:.3f} -> {history[-1][1]:.3f}",
     )
@@ -414,6 +444,22 @@ def main():
         tuple(sampled.shape) == (BATCH, CHUNK, ki.config.max_action_dim) and torch.isfinite(sampled).all(),
         f"sample_actions -> {tuple(sampled.shape)}, finite={bool(torch.isfinite(sampled).all())}",
     )
+
+    del ki
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--num-layers", type=int, default=4, help="Truncated VLM depth, for speed.")
+    parser.add_argument("--ce-steps", type=int, default=150)
+    parser.add_argument("--ce-lr", type=float, default=3e-4)
+    parser.add_argument("--objective", default="both", choices=["fast", "lap", "both"])
+    args = parser.parse_args()
+
+    print(f"device={args.device} num_vlm_layers={args.num_layers}")
+    for objective in (["fast", "lap"] if args.objective == "both" else [args.objective]):
+        run_checks(objective, args)
 
     print()
     if all(results):

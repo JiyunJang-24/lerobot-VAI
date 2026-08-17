@@ -1996,6 +1996,19 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 f"{missing_policy_camera_keys}. Policy image features: {policy_image_keys}"
             )
 
+    # The LAP knowledge-insulation objective describes the action chunk in words ("move forward
+    # moderately"), which only means anything in raw command units -- but the policy is handed
+    # mean/std-normalized actions. Give it the stats so it can undo that. Must happen before
+    # `accelerator.prepare` wraps the policy.
+    if getattr(cfg.policy, "knowledge_insulation", False) and getattr(cfg.policy, "ki_objective", "") == "lap":
+        action_stats = ds_meta.stats["action"]
+        policy.model.set_action_stats(action_stats["mean"], action_stats["std"])
+        if is_main_process:
+            logging.info(
+                "LAP objective: action stats attached (mean[:12]=%s)",
+                np.round(np.asarray(action_stats["mean"])[:12], 3).tolist(),
+            )
+
     if cfg.peft is not None:
         logging.info("Using PEFT! Wrapping model.")
         policy = wrap_policy_in_peft_model(cfg, policy)
