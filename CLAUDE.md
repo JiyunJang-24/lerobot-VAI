@@ -451,6 +451,25 @@ The postfix adds ~172 tokens to a ~163-token sequence, and attention here is eag
 | KI | 48 | 70.3 GiB | 0.450 |
 | KI | 64 | **79.7 GiB of 79.7 available** | 0.576 |
 
+**Per-rank memory is not uniform under this flag, and the table above understates 8-way DDP.**
+The postfix length is data-dependent — it is the longest FAST sequence in that rank's own batch,
+plus 4 — so every rank runs a different `L` every step (measured 232-250 at batch 64 over 300
+steps, cap 256), and eager attention squares that difference. On the live 8-GPU batch-48 run the
+ranks spread over **52-79 GiB** and the same rank moves tens of GiB between samples, because
+`nvidia-smi` reports the caching allocator's reserved pool and varying shapes make it release and
+regrow segments. No rank is structurally heavier: over a long run every rank meets a near-cap
+batch, so treat the worst observed number as everyone's ceiling. The baseline has a fixed sequence
+length and shows none of this (36.6 GiB, flat).
+
+If a rank does OOM, resume rather than restart — the env var is not part of the config, so this
+stays a legal continuation of the same run:
+
+```bash
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+BATCH_SIZE=48 OUTPUT_DIR=<the run's dir> EXTRA_TRAIN_ARGS_STR=$'--resume=true' \
+  ./run_barx_frontonly_ki.sh   # loses at most SAVE_FREQ steps
+```
+
 Batch 64 completed 100 steps but sits at 98% of the card — one longer-than-usual postfix would
 OOM it, and it cannot share GPUs with anything. **Use `BATCH_SIZE=32`** (effective 256 on 8 GPUs,
 half the 512 the section-4 baselines used — say so when comparing) or 48 if the box is otherwise
@@ -462,10 +481,14 @@ alone here.
 `ki_fast_max_tokens` (default 256) caps the postfix; `fast_truncated_frac` in the metrics tells
 you if it is biting. Truncation costs supervision on the tail of the chunk, nothing else.
 
-### Not done
+### Running
 
-* **Step 8, the full run.** Everything is in place and smoke-tested; no 50k-step job has been
-  launched.
+50k steps, batch 48 x 8 GPUs (effective 384 — the section-4 baselines used 512, say so when
+comparing), launched 2026-08-18 00:01 in tmux `smolvla_ki`:
+`outputs/train/2026-08-18/00-01-41_smolvla_robocasa_x_barx_frontonly_ki_w1.0_b48_p900_i1000_u1000/`.
+Checkpoints every 10k. ~14-22 h.
+
+### Not done
 * RA-BC per-sample weighting with knowledge insulation raises `NotImplementedError` — the CE is a
   scalar over tokens, not a per-sample loss. Nothing needs it today.
 * Chunks that run past the end of an episode are dropped from the token loss (they are padded with
