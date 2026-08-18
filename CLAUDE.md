@@ -477,9 +477,16 @@ The postfix adds ~172 tokens to a ~163-token sequence, and attention here is eag
 | run | per-rank batch | peak GPU mem | s/step |
 |---|---|---|---|
 | baseline | 64 | 36.6 GiB | 0.387 |
-| KI | 32 | 56.4 GiB | 0.317 |
-| KI | 48 | 70.3 GiB | 0.450 |
-| KI | 64 | **79.7 GiB of 79.7 available** | 0.576 |
+| baseline | 48 | 28.2 GiB | — |
+| KI fast | 32 | 56.4 GiB | 0.317 |
+| KI fast | 48 | 70.3 GiB (2 GPU) / **79.5 GiB (8 GPU)** | 0.450 / 0.483 |
+| KI fast | 64 | **79.7 GiB of 79.7 available** | 0.576 |
+| KI lap | 48 | 31.5 GiB (8 GPU) | 0.372 |
+
+Compare like with like: `lap` costs 3.3 GiB **more** than the baseline at the same batch, not less.
+It only looks cheap next to a batch-64 baseline. The whole difference is postfix length — 22 tokens
+against fast's 230-250, so the VLM sequence is ~167 against ~385 and the quadratic attention term
+is 5x smaller, plus the LM head runs over ~19 supervised positions per sample instead of ~176.
 
 **Per-rank memory is not uniform under this flag, and the table above understates 8-way DDP.**
 The postfix length is data-dependent — it is the longest FAST sequence in that rank's own batch,
@@ -511,12 +518,45 @@ alone here.
 `ki_fast_max_tokens` (default 256) caps the postfix; `fast_truncated_frac` in the metrics tells
 you if it is biting. Truncation costs supervision on the tail of the chunk, nothing else.
 
-### Running
+### Results — batch 48 x 8 GPUs (effective 384, not the 512 of section 4)
 
-50k steps, batch 48 x 8 GPUs (effective 384 — the section-4 baselines used 512, say so when
-comparing), launched 2026-08-18 00:01 in tmux `smolvla_ki`:
-`outputs/train/2026-08-18/00-01-41_smolvla_robocasa_x_barx_frontonly_ki_w1.0_b48_p900_i1000_u1000/`.
-Checkpoints every 10k. ~14-22 h.
+`./run_ki_then_lap.sh` runs both objectives back to back, everything else held fixed.
+
+| run | flow-matching loss | token CE | token acc | vision drift | lm_head drift |
+|---|---|---|---|---|---|
+| baseline (fine-tuned tower, §4) | **0.069** | — | — | 0.1029 | 0.00000 |
+| frozen encoder (§4) | 0.092 | — | — | 0 | — |
+| **KI fast**, 50k done | **0.0947** | 4.06 | 0.136 | **0.0864** | **0.14925** |
+| **KI lap**, in progress | ~0.098 @37k | 0.0024 | **1.000** | (pending) | (pending) |
+
+**Both KI variants land on the frozen-encoder action loss, not the baseline's.** The insulation
+works exactly as designed and the VLM does train — `fast` moved the vision tower 84% as far as the
+baseline did (0.0864 vs 0.1029) on the token objective alone, and unfroze `lm_head` (0 → 0.149).
+It just does not buy the action expert anything here.
+
+**The `lap` objective saturates and then stops teaching.** Content-word accuracy: 0.69 at step 200,
+0.91 by 2.4k, 0.985 by 10k, **1.000 from ~15k onward**, CE 0.002. The label is not degenerate —
+525 distinct sentences over the corpus, 7.72 bits of entropy, top-1 only 2.7% — but 7.7 bits per
+chunk over ~12 epochs is memorisable, and once it is memorised the CE gradient vanishes. From 15k
+on, the VLM has neither loss reaching it, which is the frozen-encoder condition under another name.
+`fast` never saturates (CE 4.06, accuracy 0.136 at 50k), which is the argument for it.
+
+### bf16 parameters silently freeze the LayerNorm scales
+
+Not a knowledge-insulation issue — it is true of every run in this checkout, and it turned up while
+auditing whether the backbone really trains. The VLM is loaded with `torch_dtype="bfloat16"`, so
+the *parameters* are bf16, not just the compute. bf16's ULP near 0.2 is ~0.0016 while the median
+`max|dw|` over 50k steps is 0.029, so any tensor whose accumulated update stays under half a ULP
+never moves at all. Measured on the 50k checkpoints:
+
+| run | tensors bit-identical to pretrained | of which LayerNorm/RMSNorm |
+|---|---|---|
+| baseline (no KI) | 45 of 345 | 39 |
+| KI fast | 38 of 345 | 38 |
+
+0.02% of parameters, so it does not change any conclusion — but "everything is trainable" is not
+the same as "everything moved". Fixing it means fp32 master weights, which would break
+comparability with every result in section 4, so it is left alone deliberately.
 
 ### Not done
 * RA-BC per-sample weighting with knowledge insulation raises `NotImplementedError` — the CE is a
