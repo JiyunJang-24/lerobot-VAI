@@ -700,6 +700,7 @@ class VLAFlowMatching(nn.Module):
             device=self.config.device if self.config.device is not None else "auto",
             visual_cue_mode=self.config.visual_cue_mode,
             knowledge_insulation=self.config.knowledge_insulation,
+            vision_encoder_path=self.config.vision_encoder_path,
         )
         self.postfix_tokenizer = None
         if self.config.knowledge_insulation:

@@ -74,6 +74,7 @@ class SmolVLMWithExpertModel(nn.Module):
         device: str = "auto",
         visual_cue_mode: str = "none",
         knowledge_insulation: bool = False,
+        vision_encoder_path: str = "",
     ):
         super().__init__()
         if load_vlm_weights:
@@ -130,6 +131,9 @@ class SmolVLMWithExpertModel(nn.Module):
         # Remove unused embed_tokens
         self.lm_expert.embed_tokens = None
 
+        if vision_encoder_path:
+            self.load_vision_encoder(vision_encoder_path)
+
         self.num_attention_heads = self.config.text_config.num_attention_heads
         self.num_key_value_heads = self.config.text_config.num_key_value_heads
 
@@ -142,6 +146,23 @@ class SmolVLMWithExpertModel(nn.Module):
 
     def get_vlm_model(self):
         return self.vlm.model
+
+    def load_vision_encoder(self, path: str) -> None:
+        """Replace the SigLIP tower with one pre-trained separately (visual-robust contrastive).
+
+        Strict on purpose: a silently partial load would leave a half-pretrained tower that looks
+        trained and is not, and nothing downstream would notice.
+        """
+        from safetensors.torch import load_file
+
+        state = load_file(path) if str(path).endswith(".safetensors") else torch.load(path, map_location="cpu")
+        vision_model = self.get_vlm_model().vision_model
+        target_dtype = next(vision_model.parameters()).dtype
+        state = {k: v.to(dtype=target_dtype) for k, v in state.items()}
+        missing, unexpected = vision_model.load_state_dict(state, strict=True)
+        print(f"Loaded pre-trained vision tower from {path} ({len(state)} tensors, dtype {target_dtype})")
+        if missing or unexpected:
+            raise RuntimeError(f"vision tower load mismatch: missing={missing}, unexpected={unexpected}")
 
     def lm_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """LM-head logits for already-normalized text hidden states (the VLM stream output)."""

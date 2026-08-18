@@ -103,6 +103,11 @@ class SmolVLAConfig(PreTrainedConfig):
     min_period: float = 4e-3  # sensitivity range for the timestep used in sine-cosine positional encoding
     max_period: float = 4.0
 
+    # Path to a SigLIP tower state dict from
+    # `src/lerobot/scripts/pretrain_siglip_visual_robust.py`, loaded over the pretrained tower at
+    # construction. Empty means the stock SmolVLM2 tower.
+    vision_encoder_path: str = ""
+
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
     visual_cue_mode: str = "none"  # Options are: "none", "basis", "basis-concat"
