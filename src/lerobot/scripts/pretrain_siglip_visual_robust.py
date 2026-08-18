@@ -40,9 +40,13 @@ from lerobot.datasets.lerobot_dataset import MultiLeRobotDataset  # noqa: E402
 from lerobot.policies.smolvla.modeling_smolvla import resize_with_pad  # noqa: E402
 from lerobot.scripts.lerobot_train_with_visual_robust import (  # noqa: E402
     SameEpisodeBatchSampler,
+    VisualRobustStateHead,
     _select_visual_robust_image_keys,
     _supervised_contrastive_loss,
+    build_episode_position_offsets,
+    compute_eef_state_normalizer,
     make_visual_robust_contrastive_loader,
+    visual_robust_state_loss_from_tokens,
 )
 
 VLM_MODEL = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
@@ -157,6 +161,20 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--weight-decay", type=float, default=0.0)
     ap.add_argument("--warmup", type=int, default=100)
+    ap.add_argument("--objective", choices=["contrastive", "eef", "both"], default="contrastive",
+                    help="contrastive: pull the three renders of a frame together. "
+                         "eef: regress the end-effector pose, which every render of a frame shares. "
+                         "both: sum of the two, weighted by --eef-weight")
+    ap.add_argument("--eef-weight", type=float, default=1.0)
+    ap.add_argument("--state-pool", choices=["mean", "attn"], default="attn",
+                    help="How the EEF head reads the token grid. 'attn' beats 'mean' decisively on "
+                         "this target (CLAUDE.md section 3): a mean over 1024 tokens is close to "
+                         "position-blind, while attention weights over position-tagged tokens ARE "
+                         "the localisation.")
+    ap.add_argument("--state-hidden", type=int, default=512)
+    ap.add_argument("--state-layers", type=int, default=2)
+    ap.add_argument("--rotation-weight", type=float, default=1.0)
+    ap.add_argument("--gripper-weight", type=float, default=1.0)
     ap.add_argument("--pool", choices=["mean", "tokens"], default="mean",
                     help="'mean' contrasts the pooled feature (what the gap metric measures); "
                          "'tokens' contrasts each patch position, which is closer to what the policy reads")
@@ -210,7 +228,31 @@ def main() -> int:
     log(f"{len(eval_batches)} evaluation batches, matched to tools/compare_siglip_all_checkpoints.py "
         f"({eval_batches[0].shape[0]} frames x {eval_batches[0].shape[1]} views each)")
 
-    optimizer = torch.optim.AdamW(vision_model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    state_head = None
+    normalizer = None
+    episode_offsets = None
+    trainable = list(vision_model.parameters())
+    if args.objective in ("eef", "both"):
+        dataset = loader.dataset
+        # Per-episode centering, without which the target is world-frame fingertip position -- which
+        # a robot-mounted camera genuinely cannot see, and a head asked for it plateaus at the
+        # between-episode std of 1.57 m (CLAUDE.md section 1).
+        episode_offsets = build_episode_position_offsets(dataset, "observation.state", slice(0, 3))
+        normalizer = compute_eef_state_normalizer(
+            dataset, "observation.state", quat_slice=slice(3, 7), episode_offsets=episode_offsets
+        )
+        state_head = VisualRobustStateHead(
+            in_dim=vision_model.config.hidden_size,
+            hidden_dim=args.state_hidden,
+            out_dim=8,
+            num_layers=args.state_layers,
+            pool=args.state_pool,
+        ).to(device)
+        trainable += list(state_head.parameters())
+        log(f"EEF head: pool={args.state_pool}, {sum(p.numel() for p in state_head.parameters()) / 1e6:.2f}M params, "
+            f"{int(normalizer[2].sum())}/8 dimensions active (constant ones are zero-weighted)")
+
+    optimizer = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer, lambda s: min(1.0, (s + 1) / max(1, args.warmup))
     )
@@ -233,17 +275,41 @@ def main() -> int:
 
             tokens = encode(vision_model, views.flatten(0, 1), args.encoder_chunk)
             labels = torch.arange(n_frames, device=device).repeat_interleave(n_views)
-            if args.pool == "mean":
-                loss = _supervised_contrastive_loss(tokens.mean(dim=1), labels, args.temperature)
-            else:
-                # One contrastive problem per patch position, averaged. Same positives, but the
-                # objective now has to hold at every location the connector will later read from.
-                n_tokens = tokens.shape[1]
-                per_token = [
-                    _supervised_contrastive_loss(tokens[:, i], labels, args.temperature)
-                    for i in range(0, n_tokens, max(1, n_tokens // 16))
-                ]
-                loss = sum(per_token) / len(per_token)
+
+            loss = torch.zeros((), device=device)
+            extra = {}
+            if args.objective in ("contrastive", "both"):
+                if args.pool == "mean":
+                    contrastive = _supervised_contrastive_loss(tokens.mean(dim=1), labels, args.temperature)
+                else:
+                    # One contrastive problem per patch position, averaged. Same positives, but the
+                    # objective now has to hold at every location the connector will later read from.
+                    n_tokens = tokens.shape[1]
+                    per_token = [
+                        _supervised_contrastive_loss(tokens[:, i], labels, args.temperature)
+                        for i in range(0, n_tokens, max(1, n_tokens // 16))
+                    ]
+                    contrastive = sum(per_token) / len(per_token)
+                loss = loss + contrastive
+                extra["contrastive"] = float(contrastive.detach())
+            if args.objective in ("eef", "both"):
+                # Same loss the policy-side auxiliary term uses, sharing one implementation.
+                state_loss, state_metrics = visual_robust_state_loss_from_tokens(
+                    tokens=tokens,
+                    batch=batch,
+                    head=state_head,
+                    normalizer=normalizer,
+                    device=device,
+                    num_views=n_views,
+                    episode_offsets=episode_offsets,
+                    rotation_weight=args.rotation_weight,
+                    gripper_weight=args.gripper_weight,
+                )
+                loss = loss + args.eef_weight * state_loss
+                extra["eef"] = float(state_loss.detach())
+                extra["pos_err_m"] = state_metrics["visual_robust_state_pos_err_m"]
+                extra["rot_err_deg"] = state_metrics["visual_robust_state_rot_err_deg"]
+                extra["view_spread_m"] = state_metrics["visual_robust_state_view_spread_m"]
 
             contrastive_value = float(loss.detach())
             if args.l2sp:
@@ -254,7 +320,7 @@ def main() -> int:
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(vision_model.parameters(), 10.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(trainable, 10.0)
             optimizer.step()
             scheduler.step()
             step += 1
@@ -262,12 +328,18 @@ def main() -> int:
             if step % args.eval_every == 0 or step == args.steps:
                 stats = evaluate(vision_model, eval_batches, device, args.encoder_chunk)
                 drift = relative_drift(vision_model, reference)
-                history.append({"step": step, "drift": drift, "loss": contrastive_value, **stats})
+                history.append({"step": step, "drift": drift, "loss": contrastive_value, **extra, **stats})
+                detail = "".join(
+                    f"  {k} {v:6.3f}" for k, v in extra.items() if k in ("contrastive", "eef", "pos_err_m")
+                )
                 log(
-                    f"step {step:5d}  loss {contrastive_value:6.3f}  "
+                    f"step {step:5d}  loss {contrastive_value:6.3f}{detail}  "
                     f"pooled gap {stats['pooled_gap']:+.4f}  token gap {stats['token_gap']:+.4f}  "
                     f"drift {drift:.5f}  |g| {float(grad_norm):.2f}"
                 )
+
+    if state_head is not None:
+        torch.save(state_head.state_dict(), out_dir / "eef_head.pt")
 
     tower_path = out_dir / "vision_tower.safetensors"
     from safetensors.torch import save_file

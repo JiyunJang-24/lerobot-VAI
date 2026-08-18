@@ -560,6 +560,51 @@ def compute_visual_robust_state_loss(
         freeze_backbone,
         return_tokens=True,
     )
+    return visual_robust_state_loss_from_tokens(
+        tokens=tokens,
+        batch=batch,
+        head=head,
+        normalizer=(mean, std, dim_weight),
+        device=device,
+        num_views=num_views,
+        episode_offsets=episode_offsets,
+        state_key=state_key,
+        quat_slice=quat_slice,
+        pos_slice=pos_slice,
+        grip_slice=grip_slice,
+        rotation_weight=rotation_weight,
+        gripper_weight=gripper_weight,
+    )
+
+
+def visual_robust_state_loss_from_tokens(
+    *,
+    tokens: torch.Tensor,
+    batch,
+    head: torch.nn.Module,
+    normalizer: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    device,
+    num_views: int,
+    episode_offsets=None,
+    state_key: str = "observation.state",
+    quat_slice: slice = slice(3, 7),
+    pos_slice: slice = slice(0, 3),
+    grip_slice: slice = slice(7, 8),
+    rotation_weight: float = 1.0,
+    gripper_weight: float = 1.0,
+):
+    """The EEF-state loss itself, given an already-encoded token grid.
+
+    Split out of compute_visual_robust_state_loss so the standalone encoder pre-training script
+    (src/lerobot/scripts/pretrain_siglip_visual_robust.py) runs the identical objective without
+    having to build a policy around the tower. Every subtlety this loss encodes -- per-episode
+    position centering, the sign-invariant quaternion term, the zero-weighted constant dimensions --
+    is worth exactly one implementation.
+    """
+    mean, std, dim_weight = normalizer
+    mean, std, dim_weight = mean.to(device), std.to(device), dim_weight.to(device)
+    batch_size = tokens.shape[0] // num_views
+
     predictions = head(tokens)
 
     target = batch[state_key]
