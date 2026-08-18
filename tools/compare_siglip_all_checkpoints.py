@@ -77,9 +77,9 @@ def discover(ckpt_glob: str):
 
     Every label must be distinct: `found` is keyed by it, so two runs sharing a label means one of
     them silently vanishes from the comparison and looks exactly like a checkpoint that was never
-    trained. Five runs here carry no contrastive weight at all (plain baseline, frozen encoder, L2-SP,
-    feature distillation, and two EEF-state variants), so the objective/weight pair alone is not
-    enough to tell them apart.
+    trained. Seven runs here carry no contrastive weight at all (plain baseline, frozen encoder,
+    L2-SP, feature distillation, two EEF-state variants and the two knowledge-insulation runs), so
+    the objective/weight pair alone is not enough to tell them apart.
     """
     found = {}
     for p in sorted(REPO_ROOT.glob(ckpt_glob)):
@@ -99,6 +99,10 @@ def discover(ckpt_glob: str):
             if ds.get("visual_robust_state_policy_weight"):
                 state += f"+policy w={ds['visual_robust_state_policy_weight']}"
             parts.append(state)
+        if pol.get("knowledge_insulation"):
+            # Knowledge insulation carries no dataset-side auxiliary weight, so without this every
+            # KI run would land on "baseline (no aux)" and all but one would vanish from the table.
+            parts.append(f"KI {pol.get('ki_objective', 'fast')}")
         label = " / ".join(parts) if parts else "baseline (no aux)"
         if label in found:
             label = f"{label} [{p.parents[2].name[:5]}]"

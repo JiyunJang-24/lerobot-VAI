@@ -61,6 +61,10 @@ def main() -> int:
             label += " frozen"
         if ds.get("vision_l2sp_weight"):
             label += f" l2sp={ds['vision_l2sp_weight']}"
+        if pol.get("knowledge_insulation"):
+            # No dataset-side weight identifies these, so without this both KI runs print as
+            # "baseline (no aux)" and the two rows are indistinguishable.
+            label += f" KI {pol.get('ki_objective', 'fast')}"
 
         tower = (
             SmolVLAPolicy.from_pretrained(str(path))

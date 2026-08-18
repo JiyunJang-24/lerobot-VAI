@@ -245,9 +245,17 @@ Final action loss, and the SigLIP positive/negative gap (see
 | contrastive w=0.1/0.5 | — | 0.133 / 0.140 | **+1.00 / +1.01** | +0.82 / +0.83 |
 | eef-state w=0.1 | — | — | +0.748 | +0.081 |
 | **eef-state w=0.1 + policy w=0.1** | — | — | +0.485 | **+0.165** |
+| KI fast (§8) | 0.0947 | 0.0864 | **−0.250** | −0.009 |
+| KI lap (§8) | ~0.098 | 0.1009 | **+0.056** | +0.037 |
 
 What this says:
 
+- **The two knowledge-insulation targets move the encoder in opposite directions.** Same
+  insulation, same data, only the token target differs: FAST ids give −0.250 (worse than plain
+  fine-tuning), the English sentence gives +0.056 (better than pretrained init). A FAST code is
+  embodiment-specific, an English phrase is shared across all three arms — which is the LAP claim,
+  and it shows up here as a sign flip. The effect is an order of magnitude below eef-state, and
+  neither variant helps the action loss. Details in `outputs/siglip_feature_analysis/info.txt` §5b.
 - **Fine-tuning the tower makes cross-embodiment similarity worse**, not better: −0.050 at init
   → −0.138 after baseline training. It buys 25% lower action loss (0.092 → 0.069).
 - **Alignment is inert.** Positives-only drives every raw cosine to 0.9999 — pos *and* neg — and
