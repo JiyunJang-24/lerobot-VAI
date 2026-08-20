@@ -63,6 +63,11 @@ from lerobot.datasets.lerobot_dataset import (
 )
 from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.policies.smolvla.modeling_smolvla import resize_with_pad
+from lerobot.policies.smolvla.vqa_state_text import (
+    VQAStateTokenizer,
+    build_episode_reference_states,
+    lookup_episode_references,
+)
 from collections import defaultdict
 import os
 from pathlib import Path
@@ -1197,6 +1202,79 @@ def _encode_flat_visual_robust(
     return projected if return_tokens else head(projected.mean(dim=1))
 
 
+def compute_visual_robust_vqa_loss(
+    policy: PreTrainedPolicy,
+    batch,
+    accelerator: Accelerator,
+    tokenizer,
+    references,
+    *,
+    prefixes: tuple[str, ...] = ("observation.image.",),
+    max_views: int | None = None,
+    random_views: bool = False,
+    max_frames: int | None = None,
+) -> tuple[torch.Tensor | None, dict[str, float]]:
+    """Ask the VLM where the gripper is, once per embodiment render, and score the answer.
+
+    Every render of a frame gets the SAME answer, so the only way to be right for all of them is to
+    locate the gripper regardless of which arm is holding it -- the same mechanism as the
+    EEF-state head, but routed through the LM head so the gradient reaches the whole VLM.
+
+    Each view becomes its own sample rather than being concatenated into one long sequence: the
+    question is about one picture, and stacking six robots into a single context would let the model
+    answer by averaging them instead of reading each one.
+    """
+    unwrapped_policy = _get_unwrapped_policy(policy, accelerator)
+    if unwrapped_policy.config.type != "smolvla" or "observation.state" not in batch:
+        return None, {}
+
+    keys = _select_visual_robust_image_keys(
+        batch, image_prefix=prefixes[0], max_views=max_views, random_views=random_views
+    )
+    if not keys:
+        return None, {"visual_robust_vqa_views": 0.0}
+
+    device = accelerator.device
+    views = _prepare_visual_robust_images(unwrapped_policy, batch, keys, device)  # [B, V, C, H, W]
+    batch_size, num_views = views.shape[:2]
+    if max_frames is not None and batch_size > max_frames:
+        views = views[:max_frames]
+        batch_size = max_frames
+
+    state = batch["observation.state"]
+    state = state[:, -1] if state.ndim == 3 else state
+    state = state[:batch_size].to(device=device, dtype=torch.float32)
+    reference = lookup_episode_references(references, batch, device, state.shape[-1])[:batch_size]
+
+    vqa = tokenizer.encode(state, reference)
+    # One sample per (frame, view): repeat the labels across views, flatten the views into the batch.
+    flat_views = views.flatten(0, 1)
+    repeat = lambda t: t.repeat_interleave(num_views, dim=0)  # noqa: E731
+    vqa_flat = {
+        "question_tokens": repeat(vqa["question_tokens"]),
+        "question_masks": repeat(vqa["question_masks"]),
+        "tokens": repeat(vqa["tokens"]),
+        "pad_masks": repeat(vqa["pad_masks"]),
+        "loss_masks": repeat(vqa["loss_masks"]),
+        "content_masks": repeat(vqa["content_masks"]),
+        "stats": vqa["stats"],
+    }
+    img_masks = [torch.ones(flat_views.shape[0], dtype=torch.bool, device=device)]
+
+    out = unwrapped_policy.model.vqa_state_loss([flat_views], img_masks, vqa_flat)
+    loss = out.pop("token_ce_loss")
+    metrics = {
+        "visual_robust_vqa_loss": float(loss.detach()),
+        "visual_robust_vqa_accuracy": out.get("token_accuracy", 0.0),
+        "visual_robust_vqa_content_accuracy": out.get("token_content_accuracy", 0.0),
+        "visual_robust_vqa_views": float(num_views),
+        "visual_robust_vqa_frames": float(batch_size),
+        "visual_robust_vqa_samples": float(flat_views.shape[0]),
+        "visual_robust_vqa_answer_tokens": out.get("vqa_answer_tokens_mean", 0.0),
+    }
+    return loss, metrics
+
+
 def compute_visual_robust_contrastive_loss_multi(
     policy: PreTrainedPolicy,
     batch: dict[str, Any],
@@ -1458,6 +1536,10 @@ def update_policy(
     visual_robust_wrist_width_left_index: int = 0,
     visual_robust_wrist_width_right_index: int = 1,
     visual_robust_encoder_chunk_size: int = 32,
+    visual_robust_vqa_weight: float = 0.0,
+    visual_robust_vqa_tokenizer=None,
+    visual_robust_vqa_references=None,
+    visual_robust_vqa_batch_size: int | None = None,
     vision_l2sp_weight: float = 0.0,
     vision_l2sp_scope: str = "vision",
     vision_l2sp_reference: dict[str, torch.Tensor] | None = None,
@@ -1611,6 +1693,28 @@ def update_policy(
                 )
                 output_dict["visual_robust_contrastive_weight"] = visual_robust_contrastive_weight
                 output_dict["loss_with_visual_robust"] = loss.detach().float().item()
+
+        if (
+            visual_robust_vqa_weight > 0
+            and visual_robust_vqa_tokenizer is not None
+            and visual_robust_vqa_references is not None
+        ):
+            vqa_loss, vqa_metrics = compute_visual_robust_vqa_loss(
+                policy=policy,
+                batch=visual_robust_batch if visual_robust_batch is not None else batch,
+                accelerator=accelerator,
+                tokenizer=visual_robust_vqa_tokenizer,
+                references=visual_robust_vqa_references,
+                prefixes=visual_robust_front_prefixes,
+                max_views=visual_robust_max_views,
+                random_views=visual_robust_random_views,
+                max_frames=visual_robust_vqa_batch_size,
+            )
+            output_dict.update(vqa_metrics)
+            if vqa_loss is not None:
+                loss = loss + visual_robust_vqa_weight * vqa_loss
+                output_dict["visual_robust_vqa_weight"] = visual_robust_vqa_weight
+                output_dict["loss_with_vqa"] = loss.detach().float().item()
 
         if visual_robust_state_weight > 0 and visual_robust_state_head is not None:
             state_loss, state_metrics = compute_visual_robust_state_loss(
@@ -2275,7 +2379,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     visual_robust_loader = None
     visual_robust_iter = None
-    if visual_robust_contrastive_enabled:
+    if visual_robust_contrastive_enabled or cfg.dataset.visual_robust_vqa_weight > 0:
         if not visual_robust_dataset_root or not visual_robust_repo_ids:
             raise ValueError(
                 "Visual robust contrastive learning is enabled, but --dataset.visual_robust_root "
@@ -2378,6 +2482,31 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 cfg.dataset.visual_robust_state_policy_pos_start + 7,
                 cfg.dataset.visual_robust_state_policy_grip_index,
             )
+
+    visual_robust_vqa_weight = cfg.dataset.visual_robust_vqa_weight
+    visual_robust_vqa_tokenizer = None
+    visual_robust_vqa_references = None
+    if visual_robust_vqa_weight > 0:
+        if visual_robust_loader is None:
+            raise ValueError(
+                "visual_robust_vqa_weight > 0 requires the auxiliary dataset: set "
+                "--dataset.visual_robust_root and --dataset.visual_robust_repo_id."
+            )
+        visual_robust_vqa_tokenizer = VQAStateTokenizer(
+            _get_unwrapped_policy(policy, accelerator).model.vlm_with_expert.processor.tokenizer,
+            position_resolution_cm=cfg.dataset.visual_robust_vqa_position_resolution_cm,
+            yaw_resolution_deg=cfg.dataset.visual_robust_vqa_yaw_resolution_deg,
+        )
+        visual_robust_vqa_references = build_episode_reference_states(visual_robust_loader.dataset)
+        if is_main_process:
+            logging.info(
+                "VQA objective: %d episode reference frames, %.0f cm / %.0f deg resolution",
+                len(visual_robust_vqa_references),
+                cfg.dataset.visual_robust_vqa_position_resolution_cm,
+                cfg.dataset.visual_robust_vqa_yaw_resolution_deg,
+            )
+            example = visual_robust_vqa_tokenizer.describe(12.0, -3.0, 84.0, 15.0, 1.0)
+            logging.info('  example answer: "%s"', example)
 
     visual_robust_state_normalizer = None
     visual_robust_state_offsets = None
@@ -2577,6 +2706,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             visual_robust_wrist_width_left_index=visual_robust_wrist_width_left_index,
             visual_robust_wrist_width_right_index=visual_robust_wrist_width_right_index,
             visual_robust_encoder_chunk_size=visual_robust_encoder_chunk_size,
+            visual_robust_vqa_weight=visual_robust_vqa_weight,
+            visual_robust_vqa_tokenizer=visual_robust_vqa_tokenizer,
+            visual_robust_vqa_references=visual_robust_vqa_references,
+            visual_robust_vqa_batch_size=cfg.dataset.visual_robust_vqa_batch_size,
             vision_l2sp_weight=vision_l2sp_weight,
             vision_l2sp_scope=vision_l2sp_scope,
             vision_l2sp_reference=vision_l2sp_reference,

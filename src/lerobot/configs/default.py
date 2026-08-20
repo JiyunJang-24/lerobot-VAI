@@ -150,6 +150,18 @@ class DatasetConfig:
     # robot-mounted camera cannot see. Unlike the auxiliary export's world-frame fingertip, this eef
     # pose is already base-relative (ratio 0.1-0.5), so it needs no per-episode centering.
     visual_robust_state_policy_weight: float = 0.0
+
+    # VQA on the visual-robust renders: ask the VLM where the gripper is and score the answer with
+    # the LM head. Unlike the state-regression head above, this trains the WHOLE VLM rather than the
+    # vision tower alone, which is what knowledge insulation needs once its own token objective has
+    # saturated. See policies/smolvla/vqa_state_text.py for what the answer says and which frame
+    # each quantity is measured in.
+    visual_robust_vqa_weight: float = 0.0
+    visual_robust_vqa_position_resolution_cm: float = 1.0
+    visual_robust_vqa_yaw_resolution_deg: float = 5.0
+    # Frames per VQA step. Each frame contributes one sample PER embodiment render, so the real
+    # sample count is this times the number of views.
+    visual_robust_vqa_batch_size: int = 8
     visual_robust_state_policy_pos_start: int = 7
     visual_robust_state_policy_quat_start: int = 10
     visual_robust_state_policy_grip_index: int = 14

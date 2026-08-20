@@ -872,18 +872,24 @@ class VLAFlowMatching(nn.Module):
         num_lang_embs = lang_emb.shape[1]
         att_masks += [0] * num_lang_embs
 
-        state_emb = self.state_proj(state)
-        state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
-        embs.append(state_emb)
-        bsize = state_emb.shape[0]
-        device = state_emb.device
+        if state is not None:
+            state_emb = self.state_proj(state)
+            state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
+            embs.append(state_emb)
+            bsize = state_emb.shape[0]
+            device = state_emb.device
 
-        states_seq_len = state_emb.shape[1]
-        state_mask = torch.ones(bsize, states_seq_len, dtype=torch.bool, device=device)
-        pad_masks.append(state_mask)
+            states_seq_len = state_emb.shape[1]
+            state_mask = torch.ones(bsize, states_seq_len, dtype=torch.bool, device=device)
+            pad_masks.append(state_mask)
 
-        # Set attention masks so that image and language inputs do not attend to state or actions
-        att_masks += [1] * (states_seq_len)
+            # Set attention masks so that image and language inputs do not attend to state or actions
+            att_masks += [1] * (states_seq_len)
+        else:
+            # The VQA objective asks the VLM where the gripper is; feeding the state in would be
+            # handing it the answer.
+            bsize = lang_emb.shape[0]
+            device = lang_emb.device
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
@@ -1076,6 +1082,41 @@ class VLAFlowMatching(nn.Module):
             "postfix_len": float(fast_postfix["tokens"].shape[1]),
             **fast_postfix["stats"],
         }
+
+    def vqa_state_loss(self, images, img_masks, vqa: dict) -> dict:
+        """Answer a question about the gripper from the image alone, through the whole VLM.
+
+        Unlike every other auxiliary term here, which stops at the vision tower, this runs
+        vision -> connector -> text layers -> lm_head, so the gradient reaches all of it. Under
+        knowledge insulation that is the point: the flow-matching loss is cut off from the VLM and
+        the LAP token objective saturates, so without something like this the VLM stops learning.
+
+        The action expert is not involved at all -- `inputs_embeds=[prefix, None]` with
+        `fill_kv_cache=True` keeps every layer on the plain self-attention path.
+        """
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images,
+            img_masks,
+            vqa["question_tokens"],
+            vqa["question_masks"],
+            state=None,
+            postfix_tokens=vqa["tokens"],
+            postfix_pad_masks=vqa["pad_masks"],
+        )
+        att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+        (prefix_out, _), _ = self.vlm_with_expert.forward(
+            attention_mask=att_2d_masks,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=False,
+            fill_kv_cache=True,
+        )
+        prefix_len = prefix_embs.shape[1]
+        core_len = prefix_len - vqa["tokens"].shape[1]
+        return self.postfix_token_loss(prefix_out, vqa, core_len, prefix_len)
 
     def sample_actions(
         self,
