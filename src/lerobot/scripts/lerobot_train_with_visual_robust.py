@@ -526,6 +526,7 @@ def compute_visual_robust_state_loss(
     head_mode: str = "none",
     projection_head: torch.nn.Module | None = None,
     freeze_backbone: bool = False,
+    include_views=None,
 ):
     """Regress the end-effector state from each embodiment's render of the same frame.
 
@@ -548,7 +549,8 @@ def compute_visual_robust_state_loss(
     mean, std, dim_weight = mean.to(device), std.to(device), dim_weight.to(device)
 
     keys = _select_visual_robust_image_keys(
-        batch, image_prefix=prefixes[0], max_views=max_views, random_views=random_views
+        batch, image_prefix=prefixes[0], max_views=max_views, random_views=random_views,
+        include_views=include_views,
     )
     if not keys:
         return None, {}
@@ -860,7 +862,9 @@ def compute_vision_distill_loss(
     return loss, metrics
 
 
-def _select_visual_robust_image_keys(batch, image_prefix: str, max_views=None, random_views: bool = False):
+def _select_visual_robust_image_keys(
+    batch, image_prefix: str, max_views=None, random_views: bool = False, include_views=None
+):
     """Pick which auxiliary camera keys become the positive group for this step.
 
     `random_views` matters as soon as the dataset offers more views than max_views can afford.
@@ -884,6 +888,19 @@ def _select_visual_robust_image_keys(batch, image_prefix: str, max_views=None, r
         and value.ndim >= 4
         and value.shape[-3] == 3
     )
+
+    if include_views:
+        # Naming an explicit subset, e.g. "UR5eOmron,PandaOmronPandaGripper,JacoOmron,
+        # JacoOmronPandaGripper". Matching is by substring on the key, so it works whatever the
+        # export calls its cameras. An unmatched name is an error rather than a silent drop: a
+        # typo would otherwise quietly shrink the positive group and look like a weaker result.
+        selected = [k for k in image_keys if any(v in k for v in include_views)]
+        missing = [v for v in include_views if not any(v in k for k in image_keys)]
+        if missing:
+            raise ValueError(
+                f"visual_robust_include_views named {missing}, which match none of {image_keys}"
+            )
+        image_keys = selected
 
     if max_views is not None and max_views > 0 and len(image_keys) > max_views:
         if random_views:
@@ -1212,6 +1229,7 @@ def compute_visual_robust_vqa_loss(
     prefixes: tuple[str, ...] = ("observation.image.",),
     max_views: int | None = None,
     random_views: bool = False,
+    include_views=None,
     max_frames: int | None = None,
 ) -> tuple[torch.Tensor | None, dict[str, float]]:
     """Ask the VLM where the gripper is, once per embodiment render, and score the answer.
@@ -1229,7 +1247,8 @@ def compute_visual_robust_vqa_loss(
         return None, {}
 
     keys = _select_visual_robust_image_keys(
-        batch, image_prefix=prefixes[0], max_views=max_views, random_views=random_views
+        batch, image_prefix=prefixes[0], max_views=max_views, random_views=random_views,
+        include_views=include_views,
     )
     if not keys:
         return None, {"visual_robust_vqa_views": 0.0}
@@ -1288,6 +1307,7 @@ def compute_visual_robust_contrastive_loss_multi(
     head: torch.nn.Module | None = None,
     freeze_backbone: bool = True,
     objective: str = "contrastive",
+    include_views=None,
 ) -> tuple[torch.Tensor | None, dict[str, float]]:
     """Visual-robust loss over several view groups (one per prefix), averaged.
 
@@ -1305,7 +1325,8 @@ def compute_visual_robust_contrastive_loss_multi(
     groups = []
     for prefix in prefixes:
         keys = _select_visual_robust_image_keys(
-            batch, image_prefix=prefix, max_views=max_views, random_views=random_views
+            batch, image_prefix=prefix, max_views=max_views, random_views=random_views,
+            include_views=include_views,
         )
         if len(keys) < 2:
             continue
@@ -1536,6 +1557,7 @@ def update_policy(
     visual_robust_wrist_width_left_index: int = 0,
     visual_robust_wrist_width_right_index: int = 1,
     visual_robust_encoder_chunk_size: int = 32,
+    visual_robust_include_views=None,
     visual_robust_vqa_weight: float = 0.0,
     visual_robust_vqa_tokenizer=None,
     visual_robust_vqa_references=None,
@@ -1684,6 +1706,7 @@ def update_policy(
                 head=visual_robust_head,
                 freeze_backbone=visual_robust_freeze_backbone,
                 objective=visual_robust_front_objective,
+                include_views=visual_robust_include_views,
             )
             output_dict.update(contrastive_metrics)
             if contrastive_loss is not None:
@@ -1709,6 +1732,7 @@ def update_policy(
                 max_views=visual_robust_max_views,
                 random_views=visual_robust_random_views,
                 max_frames=visual_robust_vqa_batch_size,
+                include_views=visual_robust_include_views,
             )
             output_dict.update(vqa_metrics)
             if vqa_loss is not None:
@@ -2313,6 +2337,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     visual_robust_front_prefixes = tuple(
         p.strip() for p in (cfg.dataset.visual_robust_front_prefixes or "observation.image.").split(",") if p.strip()
     )
+    visual_robust_include_views = tuple(
+        v.strip() for v in (cfg.dataset.visual_robust_include_views or "").split(",") if v.strip()
+    ) or None
     visual_robust_wrist_alignment_weight = cfg.dataset.visual_robust_wrist_alignment_weight
     visual_robust_wrist_alignment_mode = cfg.dataset.visual_robust_wrist_alignment_mode
     visual_robust_wrist_alignment_max_views = (
@@ -2706,6 +2733,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             visual_robust_wrist_width_left_index=visual_robust_wrist_width_left_index,
             visual_robust_wrist_width_right_index=visual_robust_wrist_width_right_index,
             visual_robust_encoder_chunk_size=visual_robust_encoder_chunk_size,
+            visual_robust_include_views=visual_robust_include_views,
             visual_robust_vqa_weight=visual_robust_vqa_weight,
             visual_robust_vqa_tokenizer=visual_robust_vqa_tokenizer,
             visual_robust_vqa_references=visual_robust_vqa_references,

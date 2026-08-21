@@ -156,6 +156,11 @@ class DatasetConfig:
     # vision tower alone, which is what knowledge insulation needs once its own token objective has
     # saturated. See policies/smolvla/vqa_state_text.py for what the answer says and which frame
     # each quantity is measured in.
+    # Restrict the auxiliary views to named embodiments, comma separated, e.g.
+    # "UR5eOmron,PandaOmronPandaGripper,JacoOmron,JacoOmronPandaGripper". Matched by substring
+    # against the image keys. None uses every view the export offers.
+    visual_robust_include_views: str | None = None
+
     visual_robust_vqa_weight: float = 0.0
     visual_robust_vqa_position_resolution_cm: float = 1.0
     visual_robust_vqa_yaw_resolution_deg: float = 5.0
