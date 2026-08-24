@@ -108,6 +108,9 @@ class SmolVLAConfig(PreTrainedConfig):
     # normal tower still adapts to the task, instead of asking one tower to do both.
     # Empty means single-tower, i.e. every earlier run.
     aux_vision_encoder_path: str = ""
+    # False trains the auxiliary tower too, instead of holding it fixed. Costs roughly one more
+    # tower's worth of memory (measured: 23.3 -> 37.1 GiB at batch 48, single-tower baseline 23.0).
+    freeze_aux_vision_encoder: bool = True
 
     # Path to a SigLIP tower state dict from
     # `src/lerobot/scripts/pretrain_siglip_visual_robust.py`, loaded over the pretrained tower at

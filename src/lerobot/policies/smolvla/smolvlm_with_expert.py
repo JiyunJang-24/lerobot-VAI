@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+from contextlib import nullcontext
 
 import torch
 from torch import nn
@@ -76,6 +77,7 @@ class SmolVLMWithExpertModel(nn.Module):
         knowledge_insulation: bool = False,
         vision_encoder_path: str = "",
         aux_vision_encoder_path: str = "",
+        freeze_aux_vision_encoder: bool = True,
     ):
         super().__init__()
         if load_vlm_weights:
@@ -138,7 +140,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self.aux_vision_model = None
         self.vision_fusion = None
         if aux_vision_encoder_path:
-            self.add_aux_vision_encoder(aux_vision_encoder_path)
+            self.add_aux_vision_encoder(aux_vision_encoder_path, freeze=freeze_aux_vision_encoder)
 
         self.num_attention_heads = self.config.text_config.num_attention_heads
         self.num_key_value_heads = self.config.text_config.num_key_value_heads
@@ -171,7 +173,7 @@ class SmolVLMWithExpertModel(nn.Module):
         if missing or unexpected:
             raise RuntimeError(f"vision tower load mismatch: missing={missing}, unexpected={unexpected}")
 
-    def add_aux_vision_encoder(self, path: str) -> None:
+    def add_aux_vision_encoder(self, path: str, freeze: bool = True) -> None:
         """Attach a second, frozen SigLIP tower and a layer that fuses it with the trainable one.
 
         Both towers see the same image and produce [N, 1024, 768]. The two are concatenated on the
@@ -187,9 +189,11 @@ class SmolVLMWithExpertModel(nn.Module):
         vision_model = self.get_vlm_model().vision_model
         self.aux_vision_model = copy.deepcopy(vision_model)
         self.load_vision_encoder(path, vision_model=self.aux_vision_model, label="auxiliary")
-        self.aux_vision_model.eval()
-        for params in self.aux_vision_model.parameters():
-            params.requires_grad = False
+        self.freeze_aux_vision_encoder = freeze
+        if freeze:
+            self.aux_vision_model.eval()
+            for params in self.aux_vision_model.parameters():
+                params.requires_grad = False
 
         hidden = int(self.config.vision_config.hidden_size)
         dtype = next(vision_model.parameters()).dtype
@@ -198,7 +202,8 @@ class SmolVLMWithExpertModel(nn.Module):
         with torch.no_grad():
             self.vision_fusion.weight.zero_()
             self.vision_fusion.weight[:, :hidden].copy_(torch.eye(hidden, dtype=dtype, device=device))
-        print(f"Attached frozen auxiliary vision tower ({hidden}x2 -> {hidden} fusion, identity init)")
+        state = "frozen" if freeze else "TRAINABLE"
+        print(f"Attached {state} auxiliary vision tower ({hidden}x2 -> {hidden} fusion, identity init)")
 
     def lm_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """LM-head logits for already-normalized text hidden states (the VLM stream output)."""
@@ -275,9 +280,12 @@ class SmolVLMWithExpertModel(nn.Module):
             .last_hidden_state
         )
         if self.aux_vision_model is not None:
-            # no_grad on the frozen tower: it keeps no backward graph, so a second tower costs a
-            # forward pass and not a second set of activations.
-            with torch.no_grad():
+            # no_grad only when frozen: with it, the tower keeps no backward graph, so a second
+            # tower costs a forward pass and not a second set of activations. Trainable mode needs
+            # the graph, which is why it costs roughly one more tower's worth of memory (measured:
+            # 23.3 GiB frozen vs 37.1 GiB trainable at batch 48, single tower baseline 23.0 GiB).
+            aux_ctx = torch.no_grad() if self.freeze_aux_vision_encoder else nullcontext()
+            with aux_ctx:
                 aux_hidden_states = self.aux_vision_model(
                     pixel_values=rgb.to(dtype=self.aux_vision_model.dtype),
                     patch_attention_mask=patch_attention_mask,
