@@ -67,7 +67,8 @@ def prepare_views(batch, image_keys, device, resize=(512, 512)):
     return torch.stack(images, dim=1)
 
 
-def reference_eval_batches(root: Path, batch_size: int, n_batches: int, seed: int):
+def reference_eval_batches(root: Path, batch_size: int, n_batches: int, seed: int,
+                           image_prefix: str = "observation.image.", include_views=None):
     """Rebuild tools/compare_siglip_all_checkpoints.py's evaluation batches, step for step.
 
     Same seed, same dataset order (sorted glob), same sampler, same image prep. Without this the
@@ -89,7 +90,9 @@ def reference_eval_batches(root: Path, batch_size: int, n_batches: int, seed: in
     for _ in range(n_batches):
         items = [ds[i] for i in next(it)]
         batch = {k: torch.stack([x[k] for x in items]) for k in items[0] if torch.is_tensor(items[0][k])}
-        keys = _select_visual_robust_image_keys(batch, image_prefix="observation.image.")
+        keys = _select_visual_robust_image_keys(
+            batch, image_prefix=image_prefix, include_views=include_views
+        )
         views = prepare_views(batch, keys, "cpu")
         batches.append(views)
     return batches
@@ -157,6 +160,15 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=2000)
     ap.add_argument("--batch-size", type=int, default=8, help="frames per step; each yields 3 views")
     ap.add_argument("--max-views", type=int, default=3)
+    ap.add_argument("--image-prefix", default="observation.image.",
+                    help="'observation.image.' for the 3-embodiment export, 'observation.images.' for the "
+                         "6-embodiment one, whose keys are observation.images.<Emb>.<camera>")
+    ap.add_argument("--include-views", default=None,
+                    help="Comma-separated substrings naming which views to use. REQUIRED for the "
+                         "6-embodiment export: its keys carry both cameras, and matching the prefix "
+                         "alone would pull the wrist view into the same positive group as the front "
+                         "one -- which would train away the viewpoint distinction instead of the "
+                         "robot's identity.")
     ap.add_argument("--temperature", type=float, default=0.1)
     ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--weight-decay", type=float, default=0.0)
@@ -224,7 +236,11 @@ def main() -> int:
     )
     log(f"dataset ready: {args.repo_ids}")
 
-    eval_batches = reference_eval_batches(Path(args.root), args.eval_batch_size, args.eval_batches, args.seed)
+    include_views = tuple(v.strip() for v in (args.include_views or "").split(",") if v.strip()) or None
+    eval_batches = reference_eval_batches(
+        Path(args.root), args.eval_batch_size, args.eval_batches, args.seed,
+        image_prefix=args.image_prefix, include_views=include_views,
+    )
     log(f"{len(eval_batches)} evaluation batches, matched to tools/compare_siglip_all_checkpoints.py "
         f"({eval_batches[0].shape[0]} frames x {eval_batches[0].shape[1]} views each)")
 
@@ -267,7 +283,9 @@ def main() -> int:
         for batch in loader:
             if step >= args.steps:
                 break
-            keys = _select_visual_robust_image_keys(batch, "observation.image.", max_views=args.max_views)
+            keys = _select_visual_robust_image_keys(
+            batch, args.image_prefix, max_views=args.max_views, include_views=include_views
+        )
             if len(keys) < 2:
                 continue
             views = prepare_views(batch, keys, device)

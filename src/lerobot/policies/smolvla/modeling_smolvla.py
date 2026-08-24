@@ -701,6 +701,7 @@ class VLAFlowMatching(nn.Module):
             visual_cue_mode=self.config.visual_cue_mode,
             knowledge_insulation=self.config.knowledge_insulation,
             vision_encoder_path=self.config.vision_encoder_path,
+            aux_vision_encoder_path=self.config.aux_vision_encoder_path,
         )
         self.postfix_tokenizer = None
         if self.config.knowledge_insulation:

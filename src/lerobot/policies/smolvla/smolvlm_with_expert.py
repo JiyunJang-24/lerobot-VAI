@@ -75,6 +75,7 @@ class SmolVLMWithExpertModel(nn.Module):
         visual_cue_mode: str = "none",
         knowledge_insulation: bool = False,
         vision_encoder_path: str = "",
+        aux_vision_encoder_path: str = "",
     ):
         super().__init__()
         if load_vlm_weights:
@@ -134,6 +135,11 @@ class SmolVLMWithExpertModel(nn.Module):
         if vision_encoder_path:
             self.load_vision_encoder(vision_encoder_path)
 
+        self.aux_vision_model = None
+        self.vision_fusion = None
+        if aux_vision_encoder_path:
+            self.add_aux_vision_encoder(aux_vision_encoder_path)
+
         self.num_attention_heads = self.config.text_config.num_attention_heads
         self.num_key_value_heads = self.config.text_config.num_key_value_heads
 
@@ -147,7 +153,7 @@ class SmolVLMWithExpertModel(nn.Module):
     def get_vlm_model(self):
         return self.vlm.model
 
-    def load_vision_encoder(self, path: str) -> None:
+    def load_vision_encoder(self, path: str, vision_model=None, label: str = "") -> None:
         """Replace the SigLIP tower with one pre-trained separately (visual-robust contrastive).
 
         Strict on purpose: a silently partial load would leave a half-pretrained tower that looks
@@ -156,13 +162,43 @@ class SmolVLMWithExpertModel(nn.Module):
         from safetensors.torch import load_file
 
         state = load_file(path) if str(path).endswith(".safetensors") else torch.load(path, map_location="cpu")
-        vision_model = self.get_vlm_model().vision_model
+        vision_model = self.get_vlm_model().vision_model if vision_model is None else vision_model
         target_dtype = next(vision_model.parameters()).dtype
         state = {k: v.to(dtype=target_dtype) for k, v in state.items()}
         missing, unexpected = vision_model.load_state_dict(state, strict=True)
-        print(f"Loaded pre-trained vision tower from {path} ({len(state)} tensors, dtype {target_dtype})")
+        print(f"Loaded {label or 'pre-trained'} vision tower from {path} "
+              f"({len(state)} tensors, dtype {target_dtype})")
         if missing or unexpected:
             raise RuntimeError(f"vision tower load mismatch: missing={missing}, unexpected={unexpected}")
+
+    def add_aux_vision_encoder(self, path: str) -> None:
+        """Attach a second, frozen SigLIP tower and a layer that fuses it with the trainable one.
+
+        Both towers see the same image and produce [N, 1024, 768]. The two are concatenated on the
+        feature axis and projected back to 768, so the token count and the connector are untouched
+        and nothing downstream needs to know there are two encoders.
+
+        The fusion starts as an exact identity on the trainable tower: the first half of the weight
+        is the identity matrix and the second half is zero, so at step 0 the model computes bit for
+        bit what a single-tower run computes. The frozen tower's contribution then has to be learned
+        rather than injected as noise -- without this the run would begin by destroying the
+        pretrained features it is supposed to build on.
+        """
+        vision_model = self.get_vlm_model().vision_model
+        self.aux_vision_model = copy.deepcopy(vision_model)
+        self.load_vision_encoder(path, vision_model=self.aux_vision_model, label="auxiliary")
+        self.aux_vision_model.eval()
+        for params in self.aux_vision_model.parameters():
+            params.requires_grad = False
+
+        hidden = int(self.config.vision_config.hidden_size)
+        dtype = next(vision_model.parameters()).dtype
+        device = next(vision_model.parameters()).device
+        self.vision_fusion = nn.Linear(hidden * 2, hidden, bias=False).to(dtype=dtype, device=device)
+        with torch.no_grad():
+            self.vision_fusion.weight.zero_()
+            self.vision_fusion.weight[:, :hidden].copy_(torch.eye(hidden, dtype=dtype, device=device))
+        print(f"Attached frozen auxiliary vision tower ({hidden}x2 -> {hidden} fusion, identity init)")
 
     def lm_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """LM-head logits for already-normalized text hidden states (the VLM stream output)."""
@@ -238,6 +274,18 @@ class SmolVLMWithExpertModel(nn.Module):
             )
             .last_hidden_state
         )
+        if self.aux_vision_model is not None:
+            # no_grad on the frozen tower: it keeps no backward graph, so a second tower costs a
+            # forward pass and not a second set of activations.
+            with torch.no_grad():
+                aux_hidden_states = self.aux_vision_model(
+                    pixel_values=rgb.to(dtype=self.aux_vision_model.dtype),
+                    patch_attention_mask=patch_attention_mask,
+                ).last_hidden_state
+            image_hidden_states = self.vision_fusion(
+                torch.cat([image_hidden_states, aux_hidden_states.to(image_hidden_states.dtype)], dim=-1)
+            )
+
         if self.new_visual_cue_encoder and visual_cue is not None:
             # Determine grid size from number of tokens L = s*s
             b, l, dv = image_hidden_states.shape

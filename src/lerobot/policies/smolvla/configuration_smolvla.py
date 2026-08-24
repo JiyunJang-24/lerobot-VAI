@@ -103,6 +103,12 @@ class SmolVLAConfig(PreTrainedConfig):
     min_period: float = 4e-3  # sensitivity range for the timestep used in sine-cosine positional encoding
     max_period: float = 4.0
 
+    # A SECOND, frozen SigLIP tower whose features are fused with the trainable one before the
+    # connector. The idea: keep the embodiment-invariant representation intact (frozen) while a
+    # normal tower still adapts to the task, instead of asking one tower to do both.
+    # Empty means single-tower, i.e. every earlier run.
+    aux_vision_encoder_path: str = ""
+
     # Path to a SigLIP tower state dict from
     # `src/lerobot/scripts/pretrain_siglip_visual_robust.py`, loaded over the pretrained tower at
     # construction. Empty means the stock SmolVLM2 tower.

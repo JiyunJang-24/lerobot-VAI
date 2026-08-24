@@ -453,6 +453,36 @@ def canonicalize_quaternion_xyzw(state: torch.Tensor, quat_slice: slice) -> torc
     return state
 
 
+def _mean_within_episode_std(dataset, state_key: str, pos_slice: slice):
+    """Average of each episode's own positional std -- the scale of a per-episode-centred target.
+
+    Computed directly rather than as sqrt(pooled^2 - between^2): that identity is exact in theory
+    but cancels catastrophically when the between-episode term carries almost all the variance,
+    which is the normal case for a single-tree export.
+    """
+    import pathlib
+
+    import pandas as pd
+
+    stds = []
+    for sub in getattr(dataset, "_datasets", [dataset]):
+        files = sorted(pathlib.Path(sub.root).glob("data/**/*.parquet"))
+        if not files:
+            continue
+        frame = pd.concat(
+            [pd.read_parquet(f, columns=["episode_index", state_key]) for f in files], ignore_index=True
+        )
+        states = np.stack(frame[state_key].to_numpy())[:, pos_slice]
+        episodes = frame["episode_index"].to_numpy()
+        for episode in np.unique(episodes):
+            rows = states[episodes == episode]
+            if len(rows) > 1:
+                stds.append(rows.std(axis=0))
+    if not stds:
+        return None
+    return torch.as_tensor(np.mean(np.stack(stds), axis=0), dtype=torch.float32)
+
+
 def compute_eef_state_normalizer(
     dataset, state_key: str, quat_slice: slice, std_floor: float = 1e-3, episode_offsets=None,
     pos_slice: slice = slice(0, 3)
@@ -501,8 +531,18 @@ def compute_eef_state_normalizer(
     if episode_offsets is not None:
         centered = torch.stack(list(episode_offsets.values()))
         mean[pos_slice] = 0.0
-        within = (std[pos_slice].pow(2) - centered.std(dim=0).pow(2)).clamp(min=std_floor**2).sqrt()
-        std[pos_slice] = within
+        # sqrt(pooled^2 - between^2) is a law-of-total-variance estimate of the within-episode
+        # spread, and it degenerates when the two terms are nearly equal -- which is exactly what
+        # happens on a single-tree export, where the pooled spread IS the between-episode spread.
+        # Measured on the 6-embodiment UR5e tree: pooled x = 1.648, between x = 1.650, so the
+        # difference goes negative, clamps to the floor, and the x target ends up divided by 0.001.
+        # The EEF loss then reads ~3900 instead of ~2 and swamps everything else in the sum.
+        # Averaging each episode's own std has no cancellation in it, so it stays correct whether
+        # the normalizer sees one tree or several.
+        within = _mean_within_episode_std(dataset, state_key, pos_slice)
+        if within is None:
+            within = (std[pos_slice].pow(2) - centered.std(dim=0).pow(2)).clamp(min=std_floor**2).sqrt()
+        std[pos_slice] = within.clamp(min=std_floor)
     return mean, std, dim_weight
 
 
