@@ -22,6 +22,7 @@ set -u -o pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 BARX="${SCRIPT_DIR}/dataset_git/barx_panda_ur5e_iiwa"
 AUX_TOWER="${AUX_TOWER:-${SCRIPT_DIR}/outputs/siglip_pretrain/both_cmean_eefattn_6views_b16/vision_tower.safetensors}"
+MAIN_TOWER="${MAIN_TOWER:-}"   # empty = stock SigLIP as the trainable/main tower
 WAIT_FILE="${WAIT_FILE:-${AUX_TOWER}}"
 
 if [[ "${WAIT:-true}" == "true" ]]; then
@@ -37,7 +38,17 @@ LOG="${LOG:-${SCRIPT_DIR}/outputs/logs/pnpsink_dualenc_ki_lap_$(date +%Y%m%d_%H%
 mkdir -p "${SCRIPT_DIR}/outputs/logs"
 
 FREEZE_AUX="${FREEZE_AUX:-true}"
-EXTRA_TRAIN_ARGS_STR=$'--policy.knowledge_insulation=true\n--policy.ki_objective=lap\n--policy.ki_token_loss_weight=1.0\n--policy.aux_vision_encoder_path='"${AUX_TOWER}"$'\n--policy.freeze_aux_vision_encoder='"${FREEZE_AUX}" \
+EXTRA_TRAIN_ARGS=(
+  --policy.knowledge_insulation=true
+  --policy.ki_objective=lap
+  --policy.ki_token_loss_weight=1.0
+  --policy.aux_vision_encoder_path="${AUX_TOWER}"
+  --policy.freeze_aux_vision_encoder="${FREEZE_AUX}"
+)
+if [[ -n "${MAIN_TOWER}" ]]; then
+  EXTRA_TRAIN_ARGS+=(--policy.vision_encoder_path="${MAIN_TOWER}")
+fi
+EXTRA_TRAIN_ARGS_STR="$(printf '%s\n' "${EXTRA_TRAIN_ARGS[@]}")" \
 PANDA_TOTAL_EPISODES="${PANDA_TOTAL_EPISODES:-900}" \
 IIWA_EPISODES="${IIWA_EPISODES:-1000}" \
 UR5E_EPISODES="${UR5E_EPISODES:-1000}" \
