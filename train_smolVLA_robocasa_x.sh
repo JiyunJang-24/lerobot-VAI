@@ -188,8 +188,8 @@ POLICY_VISUAL_CUE_MODE="${POLICY_VISUAL_CUE_MODE:-vanilla}"
 WANDB_MODE="${WANDB_MODE:-online}"
 # Overridable so a smoke test can run a handful of steps (e.g. STEPS=60 SAVE_FREQ=50) instead of the
 # full schedule.
-STEPS="${STEPS:-500000}"
-SAVE_FREQ="${SAVE_FREQ:-500000}"
+STEPS="${STEPS:-50000}"
+SAVE_FREQ="${SAVE_FREQ:-10000}"
 # Goes into --job_name (and therefore lerobot's default output dir + the wandb run name). Without
 # it, runs are named only by their episode counts -- so a TurnOnSinkFaucet mix and a PnP mix with
 # the same per-robot counts produce indistinguishable directories. Set it to whatever identifies

@@ -36,7 +36,8 @@ echo "auxiliary (frozen) tower: ${AUX_TOWER}"
 LOG="${LOG:-${SCRIPT_DIR}/outputs/logs/pnpsink_dualenc_ki_lap_$(date +%Y%m%d_%H%M%S).log}"
 mkdir -p "${SCRIPT_DIR}/outputs/logs"
 
-EXTRA_TRAIN_ARGS_STR=$'--policy.knowledge_insulation=true\n--policy.ki_objective=lap\n--policy.ki_token_loss_weight=1.0\n--policy.aux_vision_encoder_path='"${AUX_TOWER}" \
+FREEZE_AUX="${FREEZE_AUX:-true}"
+EXTRA_TRAIN_ARGS_STR=$'--policy.knowledge_insulation=true\n--policy.ki_objective=lap\n--policy.ki_token_loss_weight=1.0\n--policy.aux_vision_encoder_path='"${AUX_TOWER}"$'\n--policy.freeze_aux_vision_encoder='"${FREEZE_AUX}" \
 PANDA_TOTAL_EPISODES="${PANDA_TOTAL_EPISODES:-900}" \
 IIWA_EPISODES="${IIWA_EPISODES:-1000}" \
 UR5E_EPISODES="${UR5E_EPISODES:-1000}" \
@@ -50,7 +51,7 @@ FREEZE_VISION_ENCODER=false \
 GPU_IDS="${GPU_IDS:-0,1,2,3,4,5,6,7}" BATCH_SIZE="${BATCH_SIZE:-48}" \
 NUM_WORKERS="${NUM_WORKERS:-10}" \
 STEPS="${STEPS:-50000}" SAVE_FREQ="${SAVE_FREQ:-10000}" MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-29585}" \
-JOB_TAG=pnpsink_dualenc_ki_lap \
+JOB_TAG="${JOB_TAG:-pnpsink_dualenc_ki_lap}" \
 TRAIN_SCRIPT=src/lerobot/scripts/lerobot_train_with_visual_robust.py \
   "${SCRIPT_DIR}/train_smolVLA_robocasa_x.sh" 2>&1 | tee "${LOG}"
 exit "${PIPESTATUS[0]}"
