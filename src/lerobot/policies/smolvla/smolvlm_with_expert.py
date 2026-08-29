@@ -78,6 +78,7 @@ class SmolVLMWithExpertModel(nn.Module):
         vision_encoder_path: str = "",
         aux_vision_encoder_path: str = "",
         freeze_aux_vision_encoder: bool = True,
+        fusion_aux_dropout: float = 0.0,
     ):
         super().__init__()
         if load_vlm_weights:
@@ -139,6 +140,7 @@ class SmolVLMWithExpertModel(nn.Module):
 
         self.aux_vision_model = None
         self.vision_fusion = None
+        self.fusion_aux_dropout = float(fusion_aux_dropout)
         if aux_vision_encoder_path:
             self.add_aux_vision_encoder(aux_vision_encoder_path, freeze=freeze_aux_vision_encoder)
 
@@ -280,16 +282,29 @@ class SmolVLMWithExpertModel(nn.Module):
             .last_hidden_state
         )
         if self.aux_vision_model is not None:
-            # no_grad only when frozen: with it, the tower keeps no backward graph, so a second
-            # tower costs a forward pass and not a second set of activations. Trainable mode needs
-            # the graph, which is why it costs roughly one more tower's worth of memory (measured:
-            # 23.3 GiB frozen vs 37.1 GiB trainable at batch 48, single tower baseline 23.0 GiB).
-            aux_ctx = torch.no_grad() if self.freeze_aux_vision_encoder else nullcontext()
-            with aux_ctx:
-                aux_hidden_states = self.aux_vision_model(
-                    pixel_values=rgb.to(dtype=self.aux_vision_model.dtype),
-                    patch_attention_mask=patch_attention_mask,
-                ).last_hidden_state
+            # Branch dropout: zero the AUX contribution (never the main one) on a training-only
+            # fraction of steps, so the fused feature sometimes equals the main tower's output
+            # exactly and an auxiliary loss placed on the main tower cannot be routed around by the
+            # fusion weight. See SmolVLAConfig.fusion_aux_dropout.
+            drop_aux = (
+                self.training
+                and self.fusion_aux_dropout > 0
+                and torch.rand((), device=rgb.device).item() < self.fusion_aux_dropout
+            )
+            if drop_aux:
+                aux_hidden_states = torch.zeros_like(image_hidden_states)
+            else:
+                # no_grad only when frozen: with it, the tower keeps no backward graph, so a second
+                # tower costs a forward pass and not a second set of activations. Trainable mode
+                # needs the graph, which is why it costs roughly one more tower's worth of memory
+                # (measured: 23.3 GiB frozen vs 37.1 GiB trainable at batch 48, single tower
+                # baseline 23.0 GiB).
+                aux_ctx = torch.no_grad() if self.freeze_aux_vision_encoder else nullcontext()
+                with aux_ctx:
+                    aux_hidden_states = self.aux_vision_model(
+                        pixel_values=rgb.to(dtype=self.aux_vision_model.dtype),
+                        patch_attention_mask=patch_attention_mask,
+                    ).last_hidden_state
             image_hidden_states = self.vision_fusion(
                 torch.cat([image_hidden_states, aux_hidden_states.to(image_hidden_states.dtype)], dim=-1)
             )

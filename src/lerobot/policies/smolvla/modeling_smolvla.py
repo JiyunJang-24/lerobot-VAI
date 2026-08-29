@@ -703,6 +703,7 @@ class VLAFlowMatching(nn.Module):
             vision_encoder_path=self.config.vision_encoder_path,
             aux_vision_encoder_path=self.config.aux_vision_encoder_path,
             freeze_aux_vision_encoder=self.config.freeze_aux_vision_encoder,
+            fusion_aux_dropout=self.config.fusion_aux_dropout,
         )
         self.postfix_tokenizer = None
         if self.config.knowledge_insulation:

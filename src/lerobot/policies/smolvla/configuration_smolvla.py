@@ -111,6 +111,18 @@ class SmolVLAConfig(PreTrainedConfig):
     # False trains the auxiliary tower too, instead of holding it fixed. Costs roughly one more
     # tower's worth of memory (measured: 23.3 -> 37.1 GiB at batch 48, single-tower baseline 23.0).
     freeze_aux_vision_encoder: bool = True
+    # Probability of zeroing the auxiliary tower's contribution before the fusion projection, on
+    # training steps only (never at eval). Guards against a real failure mode: any auxiliary loss
+    # placed on ONE tower (e.g. visual_robust_contrastive_weight, which always acts on the MAIN
+    # tower -- see _encode_flat_visual_robust) is a loss on that tower's raw output, independent of
+    # how much the fusion layer actually uses it. The action loss is free to learn a near-zero
+    # weight for that tower's half of the fusion if the other tower's features are an easier
+    # shortcut, in which case the auxiliary objective keeps improving while the policy stops
+    # benefiting from it. Dropping the AUXILIARY branch (never the main one, which would zero the
+    # whole fused feature during the window where the fusion weight for aux is still small) forces
+    # a fraction of steps where the fused representation equals the main tower's contribution
+    # exactly, so the action loss cannot route around it.
+    fusion_aux_dropout: float = 0.0
 
     # Path to a SigLIP tower state dict from
     # `src/lerobot/scripts/pretrain_siglip_visual_robust.py`, loaded over the pretrained tower at
