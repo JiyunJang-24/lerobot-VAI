@@ -772,6 +772,18 @@ from the plan plus a control:
 
 Verify the mode took effect from the trainable-parameter count in the log, not from the flag.
 
+**The online aux term silently ran at chance for its first launch — check for this.**
+`load_images` returns [-1, 1] (the tower's range) while `SiglipRgbEncoder.forward` re-scales
+[0, 1] -> [-1, 1] itself, because that is what the DP dataloader hands it. Feeding the aux batch
+straight through gave the tower [-3, 1]. Measured on one real batch with the same tower: **4.84
+through the DP path vs 1.63 through the pre-training path**, and in the live run it settled at
+**3.849-3.851 = ln(47)**, exactly uniform over a 48-sample batch. `next_batch` now converts back
+to [0, 1].
+
+`aux_loss ≈ ln(batch − 1)` is the signature of a dead contrastive term, and it is worth checking on
+sight: nothing about the run looks wrong otherwise — the action loss falls normally, no NaN, no
+warning. The second tell is the gradient norm, 0.91 broken vs 15.33 fixed at the same step.
+
 ### 9.6 Every preprocessing trap these exports contained
 
 All four were silent-until-fatal, and all are fixed by tools that are idempotent:

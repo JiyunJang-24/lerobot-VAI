@@ -129,7 +129,12 @@ def build_embodiment_batcher(args, device):
 
     def next_batch():
         positions, labels = sample_batch(table, embodiments, args.aux_poses, args.aux_views, rng)
-        return load_images(cache, positions, device), labels.to(device)
+        # load_images returns [-1, 1] (what the tower wants), but this goes through
+        # SiglipRgbEncoder, which re-scales [0, 1] -> [-1, 1] itself because that is what the DP
+        # dataloader hands it. Passing [-1, 1] here fed the tower [-3, 1] and the contrastive loss
+        # sat at exactly ln(N-1), i.e. chance. Hand over [0, 1] so both callers agree.
+        images = (load_images(cache, positions, device) + 1.0) / 2.0
+        return images, labels.to(device)
 
     return next_batch
 
