@@ -121,6 +121,24 @@ class DiffusionConfig(PreTrainedConfig):
     # which avoids excessive padding and leads to improved training results.
     drop_n_last_frames: int = 7  # horizon - n_action_steps - n_obs_steps + 1
 
+    # --- language conditioning + a pluggable vision backbone -------------------------------------
+    # Off by default so every existing diffusion run behaves exactly as before.
+    #
+    # language_conditioned appends a sentence embedding of batch["task"] to the UNet's global
+    # conditioning vector, next to state and image features. The text encoder is frozen: the point
+    # of this policy in our setup is to isolate the VISUAL representation, so letting the language
+    # tower train too would add a second moving part to the comparison.
+    language_conditioned: bool = False
+    language_model: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+    language_embedding_dim: int = 256
+
+    # siglip_encoder_path swaps the ResNet RGB encoder for the SigLIP tower the embodiment
+    # pre-training produces, which is what makes "offline pretrain -> frozen / finetune"
+    # expressible at all. freeze_vision_encoder decides between those two conditions.
+    siglip_encoder_path: str = ""
+    use_siglip_encoder: bool = False
+    freeze_vision_encoder: bool = False
+
     # Architecture / modeling.
     # Vision backbone.
     vision_backbone: str = "resnet18"

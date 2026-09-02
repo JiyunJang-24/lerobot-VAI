@@ -24,6 +24,8 @@ import math
 from collections import deque
 from collections.abc import Callable
 
+from contextlib import nullcontext
+
 import einops
 import numpy as np
 import torch
@@ -161,6 +163,88 @@ def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMSche
         raise ValueError(f"Unsupported noise scheduler type {name}")
 
 
+class SiglipRgbEncoder(nn.Module):
+    """Drop-in replacement for DiffusionRgbEncoder backed by the SigLIP tower.
+
+    Exists so a tower produced by the embodiment pre-training can be used by the policy without
+    the policy knowing where it came from. Exposes .feature_dim like its ResNet counterpart, so
+    DiffusionModel's conditioning arithmetic is unchanged.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        from transformers import AutoModelForImageTextToText
+
+        vlm = AutoModelForImageTextToText.from_pretrained(config.language_model, dtype=torch.float32)
+        self.tower = vlm.model.vision_model
+        if config.siglip_encoder_path:
+            from safetensors.torch import load_file
+
+            self.tower.load_state_dict(load_file(config.siglip_encoder_path), strict=True)
+            print(f"DP: loaded SigLIP tower from {config.siglip_encoder_path}")
+        self.frozen = config.freeze_vision_encoder
+        if self.frozen:
+            self.tower.eval()
+            for p in self.tower.parameters():
+                p.requires_grad = False
+            print("DP: SigLIP tower FROZEN")
+        self.feature_dim = int(self.tower.config.hidden_size)
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.frozen:
+            self.tower.eval()
+        return self
+
+    def forward(self, x: Tensor) -> Tensor:
+        # DiffusionModel already flattens batch/time/camera into one axis before calling the
+        # encoder ("b s n ... -> (b s n) ..."), so x arrives as (N, C, H, W).
+        # SigLIP expects 512x512 in [-1, 1]; the DP pipeline hands over [0, 1] at native size.
+        x = F.interpolate(x, size=(512, 512), mode="bilinear", align_corners=False) * 2.0 - 1.0
+        ctx = torch.no_grad() if self.frozen else nullcontext()
+        with ctx:
+            tokens = self.tower(pixel_values=x.to(dtype=self.tower.dtype),
+                                patch_attention_mask=None).last_hidden_state
+        return tokens.mean(dim=1)
+
+
+class LanguageEncoder(nn.Module):
+    """Frozen text embedding of the task string, projected to a small conditioning vector.
+
+    Frozen on purpose: this policy exists to test whether the VISUAL representation transfers, so
+    the language side is held fixed to keep it out of the comparison.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        from transformers import AutoModelForImageTextToText, AutoTokenizer
+
+        self.tokenizer = AutoTokenizer.from_pretrained(config.language_model)
+        vlm = AutoModelForImageTextToText.from_pretrained(config.language_model, dtype=torch.float32)
+        self.embed = vlm.model.text_model.get_input_embeddings()
+        for p in self.embed.parameters():
+            p.requires_grad = False
+        self.project = nn.Linear(self.embed.embedding_dim, config.language_embedding_dim)
+        self.out_dim = config.language_embedding_dim
+        self._cache: dict[str, Tensor] = {}
+
+    def forward(self, tasks: list[str], device) -> Tensor:
+        # The corpus has a handful of distinct task strings, so tokenising them once and caching
+        # keeps this off the training loop's critical path.
+        missing = [t for t in set(tasks) if t not in self._cache]
+        if missing:
+            batch = self.tokenizer(missing, return_tensors="pt", padding=True, truncation=True,
+                                   max_length=48)
+            with torch.no_grad():
+                emb = self.embed(batch["input_ids"].to(self.embed.weight.device))
+                mask = batch["attention_mask"].to(emb.device).unsqueeze(-1)
+                pooled = (emb * mask).sum(1) / mask.sum(1).clamp(min=1)
+            for task, vector in zip(missing, pooled, strict=True):
+                self._cache[task] = vector.cpu()
+        stacked = torch.stack([self._cache[t] for t in tasks]).to(device)
+        return self.project(stacked)
+
+
 class DiffusionModel(nn.Module):
     def __init__(self, config: DiffusionConfig):
         super().__init__()
@@ -172,21 +256,31 @@ class DiffusionModel(nn.Module):
         env_cond_dim = 0
         if self.config.image_features:
             num_images = len(self.config.image_features)
+            make_encoder = (
+                (lambda: SiglipRgbEncoder(config)) if getattr(config, "use_siglip_encoder", False)
+                else (lambda: DiffusionRgbEncoder(config))
+            )
             if self.config.use_separate_rgb_encoder_per_camera:
-                encoders = [DiffusionRgbEncoder(config) for _ in range(num_images)]
+                encoders = [make_encoder() for _ in range(num_images)]
                 self.rgb_encoder = nn.ModuleList(encoders)
                 image_feature_dim = encoders[0].feature_dim
             else:
-                self.rgb_encoder = DiffusionRgbEncoder(config)
+                self.rgb_encoder = make_encoder()
                 image_feature_dim = self.rgb_encoder.feature_dim
             image_cond_steps = config.n_obs_steps + int(config.image_goal_cond)
             image_cond_dim = image_feature_dim * num_images * image_cond_steps
         if self.config.env_state_feature:
             env_cond_dim = self.config.env_state_feature.shape[0] * config.n_obs_steps
 
+        self.language_encoder = None
+        language_cond_dim = 0
+        if getattr(config, "language_conditioned", False):
+            self.language_encoder = LanguageEncoder(config)
+            language_cond_dim = self.language_encoder.out_dim
+
         self.unet = DiffusionConditionalUnet1d(
             config,
-            global_cond_dim=state_cond_dim + image_cond_dim + env_cond_dim,
+            global_cond_dim=state_cond_dim + image_cond_dim + env_cond_dim + language_cond_dim,
         )
 
         self.noise_scheduler = _make_noise_scheduler(
@@ -286,6 +380,17 @@ class DiffusionModel(nn.Module):
 
         if self.config.env_state_feature:
             global_cond_feats.append(batch[OBS_ENV_STATE].flatten(start_dim=1))
+
+        if self.language_encoder is not None:
+            tasks = batch.get("task")
+            if tasks is None:
+                raise KeyError(
+                    "language_conditioned=True but the batch has no 'task' field. The dataset must "
+                    "carry the task string for language conditioning to mean anything."
+                )
+            if isinstance(tasks, str):
+                tasks = [tasks] * batch_size
+            global_cond_feats.append(self.language_encoder(list(tasks), batch[OBS_STATE].device))
 
         # Concatenate features to (B, global_cond_dim).
         return torch.cat(global_cond_feats, dim=-1)
