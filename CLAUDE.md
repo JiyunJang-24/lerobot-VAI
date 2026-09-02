@@ -368,6 +368,7 @@ src/lerobot/scripts/pretrain_siglip_visual_robust.py  the older multi-view-colum
 src/lerobot/scripts/train_dp_embodiment.py        language-conditioned DP, 4 integration modes
 tools/eval_heldout_embodiment.py         THE evaluation — scores a tower on unseen embodiments
 tools/plot_heldout_results.py            the two result figures
+tools/predict_eef_pixel.py               runs the EEF-pixel head on the POLICY corpus (9.5)
 tools/inspect_selfws_pairs.py            what a positive/negative pair actually looks like
 tools/add_episode_stats_count.py         fixes eef_pairs before v3.0 conversion
 tools/declare_selfws_extra_features.py   fixes selfws_v2 before v3.0 conversion
@@ -736,7 +737,53 @@ error) and retrieves at 0.799 — it carries pose information, just not invarian
 to exactly 0.000. That is the combination the project wants — pose information kept (via the
 regression heads), embodiment identity gone.
 
-### 9.5 Layer 2 attempt — language-conditioned Diffusion Policy (RUNNING)
+### 9.5 Does the pose knowledge survive the domain change? No — and this is the sharp result
+
+`tools/predict_eef_pixel.py` takes the EEF-pixel head off a pre-trained tower and asks it "where is
+the gripper" on the POLICY corpus, with no fine-tuning. Two figures:
+`outputs/eef_pixel_on_policy.png` (overlays) and `outputs/eef_pixel_episode_track.png` (one episode
+each). Nothing here needed new training — the heads were saved alongside the towers.
+
+| | `all4_n42_all` | `all4_n42_eefpixel` |
+|---|---|---|
+| training pixel error | 3.55 px | 2.08 px |
+| **eef_pairs, held-out embodiments** | **5.37 px** | **3.02 px** |
+| policy corpus, per-episode camera fit | 18.69 px | 20.25 px |
+| the same fit on a **shuffled** pairing | 22.86 px | 25.64 px |
+| predicted spread (u, v) | 26, 21 | 28, 25 |
+| the spread it was trained on | 46, 43 | 46, 43 |
+
+**In its own domain the head is excellent and embodiment-invariant**: 3-5 px on a 320x180 image, on
+robots the tower never trained on. That is the strongest confirmation of 9.4 available — the
+invariance is not an artefact of the contrastive metric, because a head reading these features can
+locate the gripper on an unseen robot.
+
+**On the policy corpus it collapses to a prior.** The check is not the picture: within one episode
+the camera is fixed and the base does not move, so if the head were finding the gripper, one 11-DOF
+pinhole projection would map `observation.state[7:10]` to its predictions within a few pixels. It
+does not — the residual is ~0.8x what the *same fit on randomly re-paired frames* scores, over 18
+episodes and three robots. Meanwhile the predicted spread has fallen to about half the spread of
+the training labels, and the mean sits in the middle of the frame. Both signatures say the same
+thing: the output barely depends on the input. The track figure shows it directly — a blob near the
+sink with the time colouring scrambled inside it, while the gripper is at the top of the frame.
+
+**The domain gap here is visual, not embodiment.** eef_pairs renders a large centred robot over a
+checkerboard table at 4 canonical camera angles; the policy corpus is a cluttered kitchen from a
+different camera pose with the arm often half out of frame. Holding out embodiments does not probe
+that axis at all, so 9.4's ladder — however clean — never measured it.
+
+**Why this matters more than it looks.** It is a concrete mechanism for the section-4 puzzle, where
+an auxiliary objective moved the feature metric from -0.05 to +1.00 and left action loss exactly at
+baseline. The pre-training does teach a real, embodiment-invariant, physically-grounded skill; that
+skill just is not available on the images the policy actually sees. So the shortfall is a
+scene-domain gap, and the levers it points at are different from "more embodiments": render
+embodiments into the *policy's* scenes, or mix policy frames into pre-training.
+
+**Do not read this as "eef_pixel is a bad objective."** 9.4 measures how it shapes the
+representation; this measures whether one head transfers across a visual domain shift. They are
+different questions, and this test has no bearing on the `all` tower's use in section 9.6.
+
+### 9.6 Layer 2 attempt — language-conditioned Diffusion Policy (RUNNING)
 
 The point of a DP here is to remove the VLM as a confound: if the representation helps a plain
 policy but not the VLA, the problem is VLM integration; if it helps neither, the representation
@@ -811,7 +858,7 @@ and the dataloader are noise. Two separate causes, and only one is free:
 
 The first round of four runs predates `--amp` and is fp32 throughout; `--no-amp` reproduces it.
 
-### 9.6 Every preprocessing trap these exports contained
+### 9.7 Every preprocessing trap these exports contained
 
 All four were silent-until-fatal, and all are fixed by tools that are idempotent:
 
@@ -831,14 +878,14 @@ All four were silent-until-fatal, and all are fixed by tools that are idempotent
    so `raw_images` (140k+ files) turns a 13-hour download into a few minutes when excluded — and it
    is not needed for training.
 
-### 9.7 What a new session should do next
+### 9.8 What a new session should do next
 
 **Do not** re-run pre-training to "check it works" — the towers are in `outputs/siglip_pretrain/`
 and each carries its held-out list in `pretrain_info.json`. Read that before evaluating anything.
 
 In priority order:
 
-1. **Collect the DP results** (section 9.5, running now). Compare `scratch` against the three
+1. **Collect the DP results** (section 9.6, running now). Compare `scratch` against the three
    integration modes. That is the direct answer to concern #2.
 2. **Stand up a RoboCasa env for layer 3.** Everything so far is a proxy, and section 4 already
    shows the proxy and the policy disagreeing (contrastive reached gap +1.00 with no action-loss
