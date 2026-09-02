@@ -361,6 +361,19 @@ tools/smoke_test_knowledge_insulation.py knowledge-insulation checks — run bef
 outputs/train/<date>/<time>_<job_name>/  checkpoints + train_config.json
 outputs/logs/                            run logs
 outputs/siglip_feature_analysis/         gap figures + info.txt (read this)
+
+--- the embodiment-transfer line of work (section 9) ---------------------------------------
+src/lerobot/scripts/pretrain_siglip_eefpairs.py   contrastive / EEF-state / EEF-pixel pre-training
+src/lerobot/scripts/pretrain_siglip_visual_robust.py  the older multi-view-column variant
+src/lerobot/scripts/train_dp_embodiment.py        language-conditioned DP, 4 integration modes
+tools/eval_heldout_embodiment.py         THE evaluation — scores a tower on unseen embodiments
+tools/plot_heldout_results.py            the two result figures
+tools/inspect_selfws_pairs.py            what a positive/negative pair actually looks like
+tools/add_episode_stats_count.py         fixes eef_pairs before v3.0 conversion
+tools/declare_selfws_extra_features.py   fixes selfws_v2 before v3.0 conversion
+outputs/siglip_pretrain/<tag>/           pre-trained towers + pretrain_info.json (holdout list!)
+outputs/heldout_*.json                   evaluation results
+outputs/dp_embodiment/<mode>/            DP checkpoints + history.json
 ```
 
 tmux sessions used: `smolvla`, `smolvla_distill`, `smolvla_eef`.
@@ -573,3 +586,230 @@ comparability with every result in section 4, so it is left alone deliberately.
   repeated frames, and one token stream cannot mask per timestep the way the flow loss does). The
   key that flags them, `actions_id_pad`, is not currently produced by this dataset path, so that
   guard is untested in practice.
+
+---
+
+## 9. Embodiment transfer — can a policy act on robots it has no demonstrations for?
+
+**The research question.** Collecting action demonstrations for every embodiment does not scale.
+Rendering a robot from its URDF at many EEF poses does. So: can *static* embodiment data, never
+used for policy learning, let a policy act on embodiments it has no demonstrations for? If yes the
+recipe becomes `new embodiment -> URDF -> render -> adapt the representation` instead of
+`new embodiment -> collect demonstrations`.
+
+The advisor (Jensen) raised two concerns, and they organise everything below:
+
+1. **Is the embodiment set large enough to generalise to held-out embodiments?**
+2. **Is a pre-trained representation enough for control?** (he expects frozen features not to be)
+
+### 9.1 The three-layer evaluation, and why layer 3 does not exist yet
+
+| layer | what it measures | status |
+|---|---|---|
+| 1 — representation, held-out embodiments | does the *encoder* transfer? | **done, section 9.4** |
+| 2 — policy action loss, held-out embodiments | does the *policy* transfer? | blocked, see below |
+| 3 — task success rollout | the actual claim | **impossible here** |
+
+**Layer 3 cannot run on this machine**: robosuite / robocasa / mujoco are not installed and the
+only registered envs are aloha / pusht / libero / metaworld. `cfg.env` has never been set in any
+run in this repo, so `pc_success` has never been computed — every number anywhere in this file is
+action loss or a feature statistic, never task success. Standing up a RoboCasa env is a separate
+piece of work and is the single biggest gap in the project.
+
+**Layer 2 is data-blocked, not code-blocked**: the demonstration corpora (barx, PnPSinkToCounter)
+have 3-6 embodiments, so holding one out leaves almost nothing to hold out. The 56-embodiment data
+is static poses, not trajectories. Doing layer 2 properly needs a demonstration corpus with many
+embodiments.
+
+### 9.2 The datasets, and what "positive pair" means in each
+
+All under `/dataset/jiyun/dataset_git/`. **All arrived as v2.1 and needed conversion** — see 9.6.
+
+| dataset | shape | positive pair |
+|---|---|---|
+| `visual_robust_new_barx/new_barx` | 3 trees, one row per frame, **one column per embodiment** (3) | several columns of one row |
+| `visual_robust_new_barx_ur5e/new_barx` | 1 tree, same layout, **6 embodiments** (+Jaco, +PandaGripper variants) | same |
+| `eef_pairs/48_bg12_layout_{closed,opened}` | one image per **row**, `observation.embodiment_index` | rows sharing an episode |
+| `eef_pairs/56combo_48_bg12_{closed,open}{,_furniture}` | **56 embodiments** x 48 poses x 12 backgrounds x 4 cameras | rows sharing an episode |
+
+The column-per-embodiment layout and the row-per-embodiment layout need *different code*; that is
+why `pretrain_siglip_visual_robust.py` and `pretrain_siglip_eefpairs.py` both exist. Same
+objective, different assembly.
+
+**The 56combo family is the one to use.** Its four subsets are re-renders of ONE pose set — episode
+0 carries EEF xyz `[0.5222, 0.1529, 0.4192]` in all four — which forces a decision the loss is
+sensitive to:
+
+* colour/texture (`_furniture`) is **nuisance appearance**: the arm is in the identical
+  configuration, so those pairs are POSITIVE.
+* gripper open vs closed is **real state**, not appearance. Pulling those together would train the
+  encoder to discard whether the gripper is open, which a policy needs. So they are NEGATIVE.
+
+`build_row_table(share_poses=True)` implements exactly that: 96 poses = 48 closed + 48 open, with
+colour variants merged into each. Getting this backwards is silent — the loss still falls.
+
+**A caveat that limits the analysis**: `embodiment_index` is an integer with no name mapping
+anywhere in the export (not in `meta/`, not in the dataset card). So held-out splits are random and
+"unseen *arm*" cannot be separated from "unseen *gripper*". The older
+`visual_robust_new_barx_ur5e` DOES name them (`IIWAOmron_R85` etc). **Ask for the
+index -> (arm, gripper) mapping** — it is the single cheapest thing that would sharpen concern #1.
+
+### 9.3 Pre-training the tower (`pretrain_siglip_eefpairs.py`)
+
+```bash
+python src/lerobot/scripts/pretrain_siglip_eefpairs.py \
+  --subsets 56combo_48_bg12_closed,56combo_48_bg12_open,56combo_48_bg12_closed_furniture,56combo_48_bg12_open_furniture \
+  --objective all --holdout-embodiments 0,1,3,8,12,14,23,27,28,33,34,36,42,49 \
+  --steps 4000 --output-dir outputs/siglip_pretrain/<tag>
+```
+
+`--objective {contrastive,eef_state,eef_pixel,all}`. The three targets are **not** interchangeable,
+and the data says why:
+
+| target | std WITHIN a pose | what it can teach |
+|---|---|---|
+| xyz + quat | **0.0000** | one value per pose — the same information the contrastive grouping already carries |
+| pixel (u,v) | **40.7** | varies across the 4 camera views — the only target that asks *where in THIS image* |
+
+So the pixel head uses attention pooling (a mean over 1024 position-tagged patches is close to
+location-blind — measured, section 3) and the state head uses mean pooling. Quaternions use
+`1 - |<q,q̂>|`, never MSE: q and -q are one rotation.
+
+**The image cache is not optional.** Decoding frames inside the training loop drove load average
+past 500 on 96 cores while the GPUs sat at **0%**. The script now decodes once into
+`/dev/shm/eefpairs_cache_<subsets>.pt` (53 GB for all four) and indexes RAM after. Two rules:
+
+* build the cache with ONE run first, then launch the rest — eight processes opening a half-written
+  53 GB file all die with `PytorchStreamReader failed reading zip archive`.
+* stagger launches ~25 s apart so the eight 53 GB reads do not collide.
+
+### 9.4 Layer 1 results — the representation DOES transfer
+
+`tools/eval_heldout_embodiment.py` scores a tower **only on embodiments it never trained on**. This
+is the measurement that was missing: `compare_siglip_all_checkpoints.py`,
+`probe_embodiment_invariance.py` and the section-4 gap column are all computed on the *training*
+embodiments and therefore cannot answer the generalisation question at all.
+
+Three metrics, because the gap alone is ambiguous:
+
+* **A/B/C pair split** — A = same pose / different embodiment (want HIGH), B = different pose /
+  same embodiment (want LOW). A alone cannot separate invariance from collapse.
+* **pose retrieval top-1** — query an unseen embodiment against a gallery of seen ones, correct if
+  the neighbour shares the canonical pose. **The honest one**: its form is nothing like the
+  contrastive objective, so it cannot be satisfied by having memorised that loss.
+* **embodiment probe** — a linear probe recovering *which* robot. Invariance should push it to chance.
+
+**Scaling ladder** (each run scored on its own complement; figure: `outputs/heldout_scaling.png`):
+
+| embodiments trained on | held-out gap | pose retr@1 | emb-probe | (held-out size) |
+|---|---|---|---|---|
+| stock SigLIP | −0.099 | 0.118–0.210 | 0.15–0.52 | — |
+| 4 | +0.329 | 0.587 | 0.024 | 52 |
+| 8 | +0.646 | 0.785 | 0.000 | 48 |
+| 16 | +0.668 | 0.848 | 0.005 | 40 |
+| 32 | +0.973 | 0.969 | 0.009 | 24 |
+| **42** | **+0.994** | **0.987** | 0.015 | 14 |
+
+**Answer to concern #1: yes, and it has not saturated.** 4 embodiments already transfer (retr 0.587
+vs 0.210 stock); 42 reaches 98.7% — a pose on a robot the encoder has never seen is retrieved
+almost perfectly. Nothing here suggests a ceiling, so more embodiments is still the right lever.
+
+*Read the trend with its confound*: the held-out set SHRINKS as N grows (52 → 14), so the x axis
+moves the test set too. Scoring every rung on one common set would be worse — 2 of the common 14
+are inside n=4's training set and 8 are inside n=32's. The figure states this rather than hiding it.
+
+**Objectives** at n=42, all on the SAME 14 held out (`outputs/heldout_objectives.png`):
+
+| objective | held-out gap | pose retr@1 | emb-probe |
+|---|---|---|---|
+| contrastive | **+0.994** | **0.987** | 0.015 |
+| EEF state (xyz+quat) | +0.798 | 0.969 | 0.029 |
+| EEF pixel (u,v) | +0.154 | 0.799 | **0.324** |
+| all three | +0.988 | 0.982 | **0.000** |
+
+**EEF-pixel alone barely creates invariance** (gap +0.154, probe 0.324) and the reason is
+structural, not a bug: "where in this image" can be answered without ever deciding that two robots
+are the same, so nothing in it suppresses embodiment identity. It still learns the task (2.1 px
+error) and retrieves at 0.799 — it carries pose information, just not invariance.
+
+**`all` is the tower to use**: gap and retrieval match contrastive while the embodiment probe drops
+to exactly 0.000. That is the combination the project wants — pose information kept (via the
+regression heads), embodiment identity gone.
+
+### 9.5 Layer 2 attempt — language-conditioned Diffusion Policy (RUNNING)
+
+The point of a DP here is to remove the VLM as a confound: if the representation helps a plain
+policy but not the VLA, the problem is VLM integration; if it helps neither, the representation
+itself is what needs revisiting.
+
+Stock `DiffusionPolicy` has **neither language conditioning nor a SigLIP backbone**, so both were
+added to `configuration_diffusion.py` / `modeling_diffusion.py`, defaulted OFF so every existing
+diffusion run is untouched:
+
+* `language_conditioned` appends a **frozen** sentence embedding of `batch["task"]` to the UNet's
+  global conditioning. Frozen on purpose — this experiment isolates the VISUAL representation, and
+  a trainable text tower would add a second moving part.
+* `use_siglip_encoder` / `siglip_encoder_path` / `freeze_vision_encoder` swap the ResNet encoder for
+  the pre-trained tower. Without this, "offline pretrain → frozen / finetune" is not expressible,
+  because the pre-training artefact IS a SigLIP tower.
+
+```bash
+python src/lerobot/scripts/train_dp_embodiment.py --mode {online,frozen,finetune,scratch} \
+  --tower outputs/siglip_pretrain/all4_n42_all/vision_tower.safetensors \
+  --steps 30000 --output-dir outputs/dp_embodiment/<mode>
+```
+
+Corpus: **PnPSinkToCounter for IIWA / Panda / UR5e** (`dataset_git/barx_panda_ur5e_iiwa`), one task
+across three embodiments, 1,445,640 frames. The four modes are the three integration strategies
+from the plan plus a control:
+
+| mode | tower | trainable params | note |
+|---|---|---|---|
+| `online` | pre-trained | 364.3M | 56combo contrastive applied jointly, on the policy's OWN encoder |
+| `frozen` | pre-trained, fixed | 277.8M | fastest — no backward graph through the tower |
+| `finetune` | pre-trained, adapts | 364.3M | |
+| `scratch` | stock SigLIP | 364.3M | **the control** — without it, "does embodiment data help" has no baseline |
+
+Verify the mode took effect from the trainable-parameter count in the log, not from the flag.
+
+### 9.6 Every preprocessing trap these exports contained
+
+All four were silent-until-fatal, and all are fixed by tools that are idempotent:
+
+1. **selfws_v2: 120–304 undeclared parquet columns.** `eef_state.<tag>`, `reachable.<tag>` etc are
+   in the data and documented in `embodiment_coverage.json`, but absent from `info.json`'s
+   `features`. `Dataset.from_parquet` fails with "column names don't match" before conversion
+   starts. → `tools/declare_selfws_extra_features.py` (infers dtype/shape from the parquet).
+2. **selfws_v2 no_kitchen: declared videos that do not exist.** `YAMOmron_AG` is in `info.json` and
+   not on disk — *and not in the hub listing either* (76 present, 78 declared), so it was an export
+   bug, not a partial download. Checked before re-downloading.
+3. **eef_pairs: `episodes_stats.jsonl` has no `count`.** `aggregate_stats` needs it to weight each
+   episode; conversion dies with `KeyError: 'count'`. → `tools/add_episode_stats_count.py` reads the
+   episode length back from the parquet rather than guessing.
+4. **`hf download --include` matches nothing on these repos** (`min() arg is an empty sequence`)
+   even though `list_repo_files` returns the files. Work around it by listing files via the API and
+   calling `hf_hub_download` per file with a thread pool. Rate limit is **1000 API requests / 5 min**,
+   so `raw_images` (140k+ files) turns a 13-hour download into a few minutes when excluded — and it
+   is not needed for training.
+
+### 9.7 What a new session should do next
+
+**Do not** re-run pre-training to "check it works" — the towers are in `outputs/siglip_pretrain/`
+and each carries its held-out list in `pretrain_info.json`. Read that before evaluating anything.
+
+In priority order:
+
+1. **Collect the DP results** (section 9.5, running now). Compare `scratch` against the three
+   integration modes. That is the direct answer to concern #2.
+2. **Stand up a RoboCasa env for layer 3.** Everything so far is a proxy, and section 4 already
+   shows the proxy and the policy disagreeing (contrastive reached gap +1.00 with no action-loss
+   benefit). Until task success exists, no result here settles the research question.
+3. **Get the `embodiment_index -> (arm, gripper)` mapping** and redo the ladder split by axis. "Is
+   an unseen *arm* harder than an unseen *gripper*" is a sharper form of concern #1 than the random
+   split can answer.
+4. **Push the ladder past 42** if more embodiments become available — nothing in 9.4 has saturated.
+
+**Standing caution for this line of work**: the section-4 table shows an auxiliary objective can
+move the feature metric a long way (contrastive: gap −0.05 → +1.00) while leaving action loss
+exactly at baseline. A representation number improving is not evidence the policy improved. Report
+both, or say plainly which one is missing.
