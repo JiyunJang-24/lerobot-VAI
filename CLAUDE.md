@@ -1050,7 +1050,40 @@ Results land in `outputs/motion_prediction/<tag>/results.json` (per-embodiment b
 and `outputs/dp_motion/<tag>/history.json` (with `per_robot`, the seen-vs-held-out table).
 Task loss and motion loss are logged separately, always.
 
-### 10.5 Known limits of this design
+### 10.5 Results — Q1 and Q2 are both yes
+
+**Experiment 1** (42 train / 14 held-out embodiments, 6000 steps). Baselines: predict-the-mean is
+4.66 cm, predicting no rotation at all is 60.2 deg.
+
+| split | translation MAE | direction cos | rotation err | gripper acc |
+|---|---|---|---|---|
+| seen | 0.41 cm | 0.993 | 8.2° | 0.992 |
+| **held-out** | **0.67 cm** | **0.980** | **10.8°** | **0.970** |
+
+**Q1: yes.** On robots it has never seen, the model reads the Cartesian displacement to 0.67 cm —
+7× better than predict-the-mean — with the direction essentially right (cos 0.980). The seen →
+held-out gap is small (0.41 → 0.67 cm), so this is generalisation, not recall. Per-embodiment
+spread is 0.41–1.00 cm; no held-out embodiment fails.
+
+**Experiment 2.** Held-out error against training-embodiment count, under both protocols:
+
+| n | A: 4000/emb → total | A held MAE | A rot | B: 60k total | B held MAE | B rot |
+|---|---|---|---|---|---|---|
+| 2 | 8,000 | 3.61 cm | 52.9° | 60,000 | 3.56 cm | 55.1° |
+| 4 | 16,000 | 2.54 cm | 32.2° | 60,000 | 2.34 cm | 33.0° |
+| 8 | 32,000 | 1.73 cm | 27.2° | 60,000 | 1.79 cm | 27.9° |
+| 16 | 64,000 | 1.20 cm | 17.7° | 60,000 | 1.16 cm | 16.5° |
+| 42 | 168,000 | 0.74 cm | 11.1° | 60,000 | 0.84 cm | 12.0° |
+
+**Q2: yes, and it is diversity rather than volume.** The two protocols are indistinguishable at
+every rung even though A ends with 2.8× the data of B. Held-out error falls monotonically by 4.3×
+from 2 to 42 embodiments and has not flattened.
+
+The control that makes this readable: **seen-split error moves the other way**, 0.27 → 0.46 cm as
+embodiments increase. Few embodiments is not "easier", it is memorisation — the model fits its two
+robots better and transfers worse. Figure: `outputs/motion_experiments.png`.
+
+### 10.6 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
   no name mapping in the export, so "novel arm + seen gripper" vs "seen arm + novel gripper" cannot

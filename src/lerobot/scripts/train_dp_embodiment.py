@@ -265,9 +265,15 @@ def build_motion_terms(args, policy, device):
         return pos + rot + 0.1 * grip
 
     def real_terms(batch):
-        """The loader returned two timesteps; index 0 is t and index 1 is t+h."""
-        images = batch[CAMERA]
-        state = batch["observation.state"]
+        """The loader returned two timesteps; index 0 is t and index 1 is t+h.
+
+        Subsampled to --motion-batch. Using the whole policy batch would push 2x batch_size images
+        through the tower with gradients on top of the policy's own forward, which OOMs an 80 GB
+        card at batch 48 -- and it is not needed, since this term only has to shape the encoder.
+        """
+        take = min(args.motion_batch, batch[CAMERA].shape[0])
+        images = batch[CAMERA][:take]
+        state = batch["observation.state"][:take]
         img_t, img_h = images[:, 0], images[:, 1]
         s_t, s_h = state[:, 0].double().cpu().numpy(), state[:, 1].double().cpu().numpy()
         d_pos = (s_h[:, 7:10] - s_t[:, 7:10]) / pos_scale
