@@ -740,9 +740,9 @@ regression heads), embodiment identity gone.
 ### 9.5 Does the pose knowledge survive the domain change? No — and this is the sharp result
 
 `tools/predict_eef_pixel.py` takes the EEF-pixel head off a pre-trained tower and asks it "where is
-the gripper" on the POLICY corpus, with no fine-tuning. Two figures:
-`outputs/eef_pixel_on_policy.png` (overlays) and `outputs/eef_pixel_episode_track.png` (one episode
-each). Nothing here needed new training — the heads were saved alongside the towers.
+the gripper" on the POLICY corpus, with no fine-tuning. Two figures per tower, named after `--out`:
+`outputs/eef_pixel_<tag>.png` (overlays) and `outputs/eef_pixel_<tag>_track.png` (one episode per
+robot). Nothing here needed new training — the heads were saved alongside the towers.
 
 | | `all4_n42_all` | `all4_n42_eefpixel` |
 |---|---|---|

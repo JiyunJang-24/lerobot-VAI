@@ -268,7 +268,7 @@ def main() -> int:
     if args.track:
         log("per-episode camera fit (the camera is fixed within an episode) ...")
         rows = track_episodes(tower, head, device, args.track_episodes, args.track_frames,
-                              args.seed, args.out.with_name("eef_pixel_episode_track.png"))
+                              args.seed, args.out.with_name(args.out.stem + "_track.png"))
         log(f"{'robot':<12}{'ep':>6}{'resid px':>10}{'shuffled':>10}{'pred spread':>13}")
         for r in rows:
             log(f"{r['robot']:<12}{r['episode']:>6}{r['resid']:>10.2f}{r['chance']:>10.2f}"
