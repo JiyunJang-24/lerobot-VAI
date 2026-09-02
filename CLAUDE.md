@@ -1083,7 +1083,46 @@ The control that makes this readable: **seen-split error moves the other way**, 
 embodiments increase. Few embodiments is not "easier", it is memorisation — the model fits its two
 robots better and transfers worse. Figure: `outputs/motion_experiments.png`.
 
-### 10.6 Known limits of this design
+### 10.6 Experiment 3 — the motion auxiliary does NOT help, and the metric may not be able to say
+
+Three arms, identical stock tower / batch 32 / 15k steps, differing only in `--motion-aux`. UR5e is
+excluded from task training entirely, then scored. Action loss, `outputs/dp_motion/*/history.json`:
+
+| arm | IIWA (seen) | Panda (seen) | **UR5e (HELD OUT)** | seen mean | final motion loss |
+|---|---|---|---|---|---|
+| A vanilla | 0.0316 | 0.0368 | **0.0355** | 0.0342 | — |
+| B real motion aux | 0.0332 | 0.0379 | **0.0376** | 0.0355 | 1.61 (from 7.45) |
+| C synthetic + real | 0.0331 | 0.0377 | **0.0373** | 0.0354 | 1.79 (from 4.50) |
+
+**The auxiliary was live** — its loss fell 4.6× and 2.5× — and it still bought nothing; A is
+marginally best everywhere. The same null appears in the section-9.6 runs, step-matched so the
+comparison is fair:
+
+| mode | @10k | @15k | @21.75k | @30k |
+|---|---|---|---|---|
+| frozen | 0.0352 | 0.0363 | 0.0349 | 0.0384 |
+| finetune | 0.0351 | 0.0359 | 0.0344 | 0.0380 |
+| scratch (control) | 0.0347 | 0.0357 | 0.0343 | 0.0380 |
+| online | 0.0348 | 0.0360 | — | — |
+
+*(Read single log lines with suspicion — one `online` entry showed 0.0247 and looked like a real
+gain until it was step-matched. It was one noisy batch.)*
+
+**Before concluding "synthetic motion knowledge does not transfer", notice what A vanilla says.**
+It never saw a UR5e demonstration and scores **0.0355** on UR5e, against **0.0368** on Panda, which
+it trained on. Held-out is not worse than seen. Whatever this metric measures, a UR5e demonstration
+is worth roughly nothing on it — so it has almost no headroom in which any method could show an
+improvement, and the three arms landing within 6% of each other is what an insensitive metric looks
+like, not necessarily what a failed hypothesis looks like. Two controls are running to settle it:
+`D_headroom` (vanilla WITH UR5e in training — the floor the held-out number could ever reach) and
+second seeds of A and C (the 6% spread means nothing until seed noise is known).
+
+**This is the same wall as section 9.1**: action loss keeps failing to discriminate, and there is
+still no task-success evaluation anywhere in this repo. Q1 and Q2 got clean answers because motion
+prediction has a real metric. Q3 does not yet, and standing up a RoboCasa rollout is now the single
+highest-value thing left — without it Q3 cannot be answered either way.
+
+### 10.7 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
   no name mapping in the export, so "novel arm + seen gripper" vs "seen arm + novel gripper" cannot
