@@ -370,6 +370,7 @@ tools/eval_heldout_embodiment.py         THE evaluation — scores a tower on un
 tools/plot_heldout_results.py            the two result figures
 tools/predict_eef_pixel.py               runs the EEF-pixel head on the POLICY corpus (9.5)
 tools/diagnose_eef_pixel_sensitivity.py  which axis breaks it — appearance vs geometry (9.5)
+tools/measure_feature_displacement.py    how far the FEATURE moves per change (9.5)
 tools/inspect_selfws_pairs.py            what a positive/negative pair actually looks like
 tools/add_episode_stats_count.py         fixes eef_pairs before v3.0 conversion
 tools/declare_selfws_extra_features.py   fixes selfws_v2 before v3.0 conversion
@@ -790,6 +791,33 @@ introduces, and it fails just as hard.
 So the head never learned "find the gripper". It learned an absolute pose → pixel mapping for the
 **4 fixed canonical camera geometries** eef_pairs contains, and it handles those four beautifully on
 robots it has never seen. Any fifth geometry — which is what the policy corpus is — is outside it.
+
+**And the features move with it, not just the head's readout.**
+`tools/measure_feature_displacement.py` perturbs one image and measures how far its *feature* goes,
+in the only unit that means anything here — how far the feature goes for a genuine change of pose
+(`outputs/feature_displacement.png`). That reference is itself 98% of the distance between two
+unrelated images, so read these as "fraction of the way to nothing in common":
+
+| what changed | feature displacement |
+|---|---|
+| background (same pose, same robot) | **1%** |
+| furniture recolour (same pose, same robot) | **2%** |
+| different robot (same pose) | **4%** |
+| shift 40 px (same image, moved) | **31%** |
+| zoom out to 0.75 (same image, smaller) | **41%** |
+| genuine pose change | 100% (the reference) |
+| a policy-corpus frame | **102%** — fully decorrelated |
+
+So the answer to "wrong pixel means the feature moved too" is **yes**, and this is the sharpest
+statement of the problem available: the tower treats a 40-pixel camera shift as a third of the way
+to a completely unrelated image, while treating a different *robot* as 4%. The invariance it learned
+is to embodiment and appearance; it is emphatically **not** invariance to camera geometry, and pose
+and camera pose are entangled in the same directions.
+
+This is what makes it a policy problem and not a head problem: the policy reads these features and
+never touches the pixel head. A policy-corpus frame sits at the unrelated-image floor, so a frozen
+tower hands the policy features that carry none of the pre-trained structure — which is the
+mechanism behind "frozen contrastive tower ≈ frozen stock tower" in section 4 (0.136 vs 0.129).
 
 **This makes the fix cheap and specific.** Random resized crop / shift augmentation during
 pre-training attacks exactly the axis that is broken, and costs nothing but a re-run; adding more
