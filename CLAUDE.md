@@ -369,6 +369,7 @@ src/lerobot/scripts/train_dp_embodiment.py        language-conditioned DP, 4 int
 tools/eval_heldout_embodiment.py         THE evaluation — scores a tower on unseen embodiments
 tools/plot_heldout_results.py            the two result figures
 tools/predict_eef_pixel.py               runs the EEF-pixel head on the POLICY corpus (9.5)
+tools/diagnose_eef_pixel_sensitivity.py  which axis breaks it — appearance vs geometry (9.5)
 tools/inspect_selfws_pairs.py            what a positive/negative pair actually looks like
 tools/add_episode_stats_count.py         fixes eef_pairs before v3.0 conversion
 tools/declare_selfws_extra_features.py   fixes selfws_v2 before v3.0 conversion
@@ -767,10 +768,33 @@ the training labels, and the mean sits in the middle of the frame. Both signatur
 thing: the output barely depends on the input. The track figure shows it directly — a blob near the
 sink with the time colouring scrambled inside it, while the gripper is at the top of the frame.
 
-**The domain gap here is visual, not embodiment.** eef_pairs renders a large centred robot over a
-checkerboard table at 4 canonical camera angles; the policy corpus is a cluttered kitchen from a
-different camera pose with the arm often half out of frame. Holding out embodiments does not probe
-that axis at all, so 9.4's ladder — however clean — never measured it.
+**It is geometry, not background** — `tools/diagnose_eef_pixel_sensitivity.py`, scored against real
+labels on held-out embodiments (`outputs/eef_pixel_sensitivity.png`). "It is sensitive to the
+background" is the natural reading of the failure and it is **wrong**, which matters because the two
+readings point at completely different fixes:
+
+| axis varied | seen in pre-training? | pixel error |
+|---|---|---|
+| 12 backgrounds | yes | 3.38 – 5.50 (flat) |
+| 4 camera views | yes | 3.83 – 4.70 (flat) |
+| furniture recolour, same pose | yes | 4.63 → 4.81 |
+| **zoom out to 0.75 / 0.55 / 0.40 / 0.30** | no | **19.1 / 36.6 / 51.8 / 65.5** |
+| **zoom in to 0.75 / 0.55** (no padded border) | no | **20.1 / 29.3** |
+| **shift 40 px across, size unchanged** | no | **29.9** |
+
+Appearance is free — 12 backgrounds and a furniture recolour move the error by under 1 px. Geometry
+is not: a 40-pixel horizontal shift, 12% of the image width, takes it from 4.6 px to 29.9 px with
+the apparent size untouched. Zoom-in is the control that rules out the padded border zoom-out
+introduces, and it fails just as hard.
+
+So the head never learned "find the gripper". It learned an absolute pose → pixel mapping for the
+**4 fixed canonical camera geometries** eef_pairs contains, and it handles those four beautifully on
+robots it has never seen. Any fifth geometry — which is what the policy corpus is — is outside it.
+
+**This makes the fix cheap and specific.** Random resized crop / shift augmentation during
+pre-training attacks exactly the axis that is broken, and costs nothing but a re-run; adding more
+backgrounds or more embodiments attacks axes that are already flat. Worth measuring before anything
+more elaborate.
 
 **Why this matters more than it looks.** It is a concrete mechanism for the section-4 puzzle, where
 an auxiliary objective moved the feature metric from -0.05 to +1.00 and left action loss exactly at
