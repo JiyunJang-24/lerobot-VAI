@@ -23,6 +23,7 @@ import argparse
 import json
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -158,6 +159,10 @@ def main() -> int:
     ap.add_argument("--log-freq", type=int, default=250)
     ap.add_argument("--save-freq", type=int, default=10000)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--no-amp", dest="amp", action="store_false",
+                    help="run the vision tower in fp32. It is ~4x slower and the features are "
+                         "identical (cosine 1.00000), so this exists only to reproduce the first "
+                         "round of runs, which predate the autocast.")
     ap.add_argument("--output-dir", required=True)
     args = ap.parse_args()
 
@@ -172,7 +177,8 @@ def main() -> int:
     policy, config = make_policy(args, dataset, device)
     trainable = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     total = sum(p.numel() for p in policy.parameters())
-    log(f"mode={args.mode}  trainable {trainable / 1e6:.1f}M / {total / 1e6:.1f}M  "
+    log(f"mode={args.mode}  amp={'bf16' if args.amp else 'fp32'}  "
+        f"trainable {trainable / 1e6:.1f}M / {total / 1e6:.1f}M  "
         f"tower={'pretrained' if args.mode != 'scratch' else 'stock'}  "
         f"frozen={config.freeze_vision_encoder}")
 
@@ -205,7 +211,14 @@ def main() -> int:
             if batch[CAMERA].ndim == 4:
                 batch[CAMERA] = batch[CAMERA].unsqueeze(1)
 
-            loss, parts = policy.forward(batch)
+            # The step is ~95% vision tower (1021 ms of 1075 at batch 64), and the tower is
+            # fp32 weights, so without this H100 tensor cores go unused. bf16 autocast keeps fp32
+            # master weights -- this is NOT the bf16-parameter trap in section 8 -- and the tower's
+            # features are unchanged: fp32-vs-bf16 feature cosine is 1.00000 at 5 decimals.
+            amp = torch.autocast("cuda", dtype=torch.bfloat16) if args.amp else nullcontext()
+            with amp:
+                loss, parts = policy.forward(batch)
+            loss = loss.float()
             action_loss = float(loss)
 
             aux_value = float("nan")
@@ -215,8 +228,12 @@ def main() -> int:
                 images, labels = aux_batch()
                 encoder = policy.diffusion.rgb_encoder
                 encoder = encoder[0] if isinstance(encoder, torch.nn.ModuleList) else encoder
-                feats = encoder(images)
-                aux = _supervised_contrastive_loss(feats, labels, args.aux_temperature)
+                with amp:
+                    feats = encoder(images)
+                # _supervised_contrastive_loss casts to float32 internally, which matters here for
+                # the reason section 3 gives: this loss lives in the cos > 0.99 regime where
+                # bfloat16's spacing near 1.0 rounds the gradient away entirely.
+                aux = _supervised_contrastive_loss(feats.float(), labels, args.aux_temperature)
                 loss = loss + args.aux_weight * aux
                 aux_value = float(aux)
 

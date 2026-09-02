@@ -784,6 +784,33 @@ to [0, 1].
 sight: nothing about the run looks wrong otherwise — the action loss falls normally, no NaN, no
 warning. The second tell is the gradient norm, 0.91 broken vs 15.33 fixed at the same step.
 
+**Cost: the step is ~95% vision tower, so watch the tower and ignore everything else.** Measured
+at batch 64 on one H100:
+
+| | time |
+|---|---|
+| SigLIP fwd+bwd, 512x512, **fp32** | **1021 ms** |
+| SigLIP fwd only (what `frozen` pays) | 352 ms |
+| SigLIP fwd+bwd, 512x512, **bf16 autocast** | **247 ms** |
+| SigLIP fwd+bwd at the image's native 192x320 | 213 ms |
+| ResNet18, the stock DP encoder, fwd+bwd | 14.8 ms |
+
+`finetune`/`scratch` ran at 0.93 it/s = 1075 ms/step against 1021 ms of tower: the diffusion UNet
+and the dataloader are noise. Two separate causes, and only one is free:
+
+* **fp32.** `SiglipRgbEncoder` loads with `dtype=torch.float32` and nothing wrapped it in autocast,
+  so the tensor cores went unused. `--amp` (default on) is **4.1x** on the tower and changes
+  nothing numerically — fp32-vs-bf16 feature cosine is **1.00000 at the minimum**, not the mean.
+  This is autocast over fp32 master weights, so it is NOT the bf16-parameter trap in section 8.
+  End to end it is ~2x rather than 4x, because once the tower stops dominating the UNet and the
+  loader become the next terms.
+* **512x512.** The frames are natively 180x320 but the tower is fed 512x512, i.e. 1024 patch
+  tokens where 240 would do. Worth 4.8x and NOT free: every tower in `outputs/siglip_pretrain/`
+  was pre-trained at 512 (`load_images` pads to 512), so taking this would mean redoing
+  pre-training at the new resolution as well. Do both together or neither.
+
+The first round of four runs predates `--amp` and is fp32 throughout; `--no-amp` reproduces it.
+
 ### 9.6 Every preprocessing trap these exports contained
 
 All four were silent-until-fatal, and all are fixed by tools that are idempotent:
