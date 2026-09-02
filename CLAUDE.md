@@ -951,3 +951,111 @@ In priority order:
 move the feature metric a long way (contrastive: gap −0.05 → +1.00) while leaving action loss
 exactly at baseline. A representation number improving is not evidence the policy improved. Report
 both, or say plainly which one is missing.
+
+
+---
+
+## 10. Cross-embodiment motion prediction (experiments 1–3)
+
+**The hypothesis.** If a model learns to read the *same* Cartesian EEF motion across many
+synthetically rendered robots, that visual-motion knowledge may transfer to held-out embodiments and
+carry task knowledge to robots with no demonstrations. Three questions, deliberately separable:
+
+* **Q1** can visual motion knowledge generalise to unseen morphologies? — experiment 1
+* **Q2** does more synthetic embodiment diversity improve that? — experiment 2
+* **Q3** does it improve task transfer to robots without demonstrations? — experiment 3
+
+### 10.1 What the repo already had, and what had to be built
+
+| need | reused |
+|---|---|
+| paired renders of one motion across robots | `eef_pairs/56combo_*` — no new rendering needed, see below |
+| image cache | `/dev/shm/eefpairs_cache_*.pt` from `pretrain_siglip_eefpairs.py` |
+| visual backbone | the SmolVLM SigLIP tower, same loader as `SiglipRgbEncoder` |
+| pooling that is not location-blind | `RegressionHead`'s attention pooling (section 3) |
+| policy for experiment 3 | `train_dp_embodiment.py` — language-conditioned DP, already built |
+| held-out scoring | `tools/eval_heldout_embodiment.py` pattern |
+
+New: `src/lerobot/scripts/motion_data.py` (conventions + guards),
+`src/lerobot/scripts/train_motion_prediction.py` (experiments 1–2),
+`tools/report_motion_experiments.py`, and `--motion-aux` / `--heldout-robots` on the DP trainer.
+
+**No new rendering was required.** All 56 embodiments in `56combo_*` are posed at the SAME 48
+canonical EEF states, so "pose i → pose j" is literally the same motion on every robot. Drawing ONE
+pool of pose pairs and reusing it for every embodiment makes embodiment-identity-as-shortcut
+impossible *by construction* rather than by sampling luck — `assert_no_motion_shortcut()`.
+
+### 10.2 The action convention — read this before trusting any motion label
+
+`observation.state` is `[16]`: base pose `0:7`, **eef xyz `7:10`**, **eef quat `10:14` (wxyz)**,
+gripper `14:16`. `eef_pairs` is `[9]`: xyz `0:3`, **quat `3:7` (xyzw)**, eef pixel `7:9`.
+**The two corpora use opposite quaternion order.** `motion_data.py` is xyzw throughout and is the
+only place the other convention appears.
+
+`action` is `[12]` = `[base(3), torso, mode, dpos(3), drot(3), gripper]` — and **it is not a metric
+displacement**. `a[0:4]` are identically zero, `a[4]` is −1 (mode), and `dpos`/`drot` are normalised
+OSC commands. Regressing achieved base-frame EEF delta on commanded `dpos`:
+
+| robot | R² | per-unit scale |
+|---|---|---|
+| IIWA | 0.47 | ~0.007 m |
+| Panda | 0.31 | ~0.006 m |
+| UR5e | 0.71 | ~0.010 m |
+
+A different near-diagonal matrix per robot, and less than half the variance explained. Using the
+action as the cross-embodiment motion target would bake per-robot controller gains into the label —
+precisely the embodiment shortcut the hypothesis is trying to avoid. **Every target here is the
+measured state delta instead**, in the robot BASE frame, which is also the frame the base-mounted
+`agentview_right` camera is fixed to.
+
+Required sanity test, run at every startup (`verify_reconstruction`): `p_i + d_pos` reproduces
+`p_j` to **0.00e+00 m** and `q_rel ⊗ q_i` reproduces `q_j` to **7e-08**, sign-invariantly.
+
+### 10.3 The one mismatch that is NOT fixed
+
+Translation matches: real motion over 25 steps @20 fps is 0.09 m; synthetic pose pairs within
+0.15 m average 0.096 m. **Rotation does not**: real is ~9°, synthetic is ~60°, because those 48
+poses were sampled to *cover the workspace*, not to look like trajectory segments. Capping helps and
+costs vocabulary:
+
+| cap | pairs | mean rotation |
+|---|---|---|
+| none | 1262 | 60.2° |
+| 45° | 458 | 27.7° |
+| **30° (experiment 3 default)** | **270** | **21.2°** |
+| 20° | 96 | 14.0° |
+
+Both numbers are logged, never smoothed over. **The proper fix is at render time**: sample `s_t`
+then a *local* `delta_eef`, which is what the original brief described. The existing `eef_pairs`
+export approximates it by pairing workspace-covering poses.
+
+### 10.4 Commands
+
+```bash
+# experiment 1
+python src/lerobot/scripts/train_motion_prediction.py --tag exp1_n42 --steps 6000
+# experiment 2 — protocol A (data grows) and B (data fixed)
+... --tag exp2A_n8 --num-embodiments 8 --samples-per-embodiment 4000
+... --tag exp2B_n8 --num-embodiments 8 --fixed-total-samples 60000
+python tools/report_motion_experiments.py          # tables + outputs/motion_experiments.png
+
+# experiment 3 — A vanilla, B real motion aux, C synthetic + real
+python src/lerobot/scripts/train_dp_embodiment.py --mode scratch --motion-aux none \
+    --heldout-robots UR5eOmron --output-dir outputs/dp_motion/A_vanilla
+... --motion-aux real  --output-dir outputs/dp_motion/B_real
+... --motion-aux both  --output-dir outputs/dp_motion/C_synth_real
+```
+
+Results land in `outputs/motion_prediction/<tag>/results.json` (per-embodiment breakdown included)
+and `outputs/dp_motion/<tag>/history.json` (with `per_robot`, the seen-vs-held-out table).
+Task loss and motion loss are logged separately, always.
+
+### 10.5 Known limits of this design
+
+* **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
+  no name mapping in the export, so "novel arm + seen gripper" vs "seen arm + novel gripper" cannot
+  be separated and the split is random. Section 9.2 — still the cheapest thing to ask for.
+* **Experiment 3's held-out robot is one of three.** The barx corpus has IIWA / Panda / UR5e only,
+  so holding one out leaves two. `visual_robust_new_barx_ur5e` has 6 *named* embodiments over the
+  same episodes and is the better held-out set once its re-export lands.
+* **Still no task success anywhere.** Everything is action loss (section 9.1).
