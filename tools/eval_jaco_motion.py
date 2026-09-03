@@ -129,6 +129,11 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--head-lr", type=float, default=1e-4)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--init-from", default="",
+                    help="a motion_head.pt from train_motion_prediction, with its tower. Tests "
+                         "whether SYNTHETIC motion pre-training helps real cross-embodiment motion "
+                         "-- which is the whole hypothesis, end to end.")
+    ap.add_argument("--frozen-tower", action="store_true")
     ap.add_argument("--out", type=Path, default=REPO_ROOT / "outputs/jaco_motion.json")
     args = ap.parse_args()
 
@@ -156,11 +161,32 @@ def main() -> int:
 
     tower = load_tower(str(args.checkpoint / "vision_tower.safetensors"), device)
     head = MotionHead(int(tower.config.hidden_size)).to(device)
-    groups = [{"params": list(head.parameters()), "lr": args.head_lr},
-              {"params": list(tower.parameters()), "lr": args.lr}]
+    if args.init_from:
+        init = Path(args.init_from)
+        state = torch.load(init / "motion_head.pt")
+        head.load_state_dict(state["head"])
+        tower_file = init / "vision_tower.safetensors"
+        if tower_file.exists():
+            from safetensors.torch import load_file
+
+            tower.load_state_dict(load_file(tower_file), strict=True)
+            log(f"initialised tower AND head from {init.name}")
+        else:
+            log(f"initialised head from {init.name}; tower left at {args.checkpoint.name} "
+                f"(no vision_tower.safetensors saved with that run)")
+    if args.frozen_tower:
+        for prm in tower.parameters():
+            prm.requires_grad = False
+        tower.eval()
+        log("tower frozen -- only the motion head adapts")
+    groups = [{"params": list(head.parameters()), "lr": args.head_lr}]
+    if not args.frozen_tower:
+        groups.append({"params": list(tower.parameters()), "lr": args.lr})
     opt = torch.optim.AdamW(groups, weight_decay=1e-4)
 
-    tower.train(), head.train()
+    if not args.frozen_tower:
+        tower.train()
+    head.train()
     t0 = time.time()
     for step in range(1, args.steps + 1):
         pick = rng.choice(train_idx, size=args.batch_size, replace=False)
@@ -191,7 +217,9 @@ def main() -> int:
     log(f"baselines: predict-the-mean {base_mae * 100:.2f} cm, identity-rotation {base_rot:.1f} deg")
 
     results = {"baselines": {"translation_mae_m": base_mae, "rotation_err_deg": base_rot},
-               "horizon": args.horizon, "n_eval": int(n_eval), "per_embodiment": {}}
+               "horizon": args.horizon, "n_eval": int(n_eval), "n_pairs": int(len(anchors)),
+               "init_from": args.init_from, "frozen_tower": bool(args.frozen_tower),
+               "steps": args.steps, "seed": args.seed, "per_embodiment": {}}
     log(f"{'embodiment':<24}{'category':<26}{'trans MAE':>11}{'dir cos':>9}{'rot err':>10}")
     for emb, category in CATEGORY.items():
         preds = []

@@ -27,7 +27,15 @@ SUBSETS = [
     "56combo_48_bg12_closed_furniture",
     "56combo_48_bg12_open_furniture",
 ]
-CACHE = Path("/dev/shm") / f"eefpairs_cache_{'_'.join(SUBSETS)}.pt"
+
+
+def cache_path(subsets: list[str]) -> Path:
+    """One cache per subset combination. The name must encode the combination, or a run with a
+    different subset list silently indexes another run's images against its own labels."""
+    return Path("/dev/shm") / f"eefpairs_cache_{'_'.join(subsets)}.pt"
+
+
+CACHE = cache_path(SUBSETS)
 
 
 def log(msg: str) -> None:
@@ -67,15 +75,16 @@ def geodesic_deg(pred: np.ndarray, target: np.ndarray) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------------------------
-def build_table() -> pd.DataFrame:
+def build_table(subsets: list[str] | None = None) -> pd.DataFrame:
     """One row per rendered frame, in EXACTLY the order the /dev/shm image cache was written in.
 
     The cache is indexed positionally against pretrain_siglip_eefpairs.build_row_table, so this
     reproduces that function's ordering (sorted glob, concat in subset order) and then asserts the
     result lines up. Getting this silently wrong would pair every image with another image's label.
     """
+    subsets = list(subsets or SUBSETS)
     tables, offset = [], 0
-    for subset in SUBSETS:
+    for subset in subsets:
         files = sorted(glob.glob(str(EEF_ROOT / subset / "data" / "**" / "*.parquet"), recursive=True))
         table = pd.concat([
             pd.read_parquet(f, columns=[
@@ -102,7 +111,7 @@ def build_table() -> pd.DataFrame:
 
     from lerobot.scripts.pretrain_siglip_eefpairs import build_row_table
 
-    reference = build_row_table(EEF_ROOT, SUBSETS, share_poses=True).reset_index(drop=True)
+    reference = build_row_table(EEF_ROOT, subsets, share_poses=True).reset_index(drop=True)
     assert len(reference) == len(out), f"cache ordering: {len(reference)} vs {len(out)} rows"
     assert (reference["row"].to_numpy() == out["row"].to_numpy()).all(), "cache ordering diverged"
     return out
@@ -176,12 +185,12 @@ def assert_no_leakage(train: list[int], heldout: list[int]) -> None:
     log(f"leakage check: {len(train)} train / {len(heldout)} held-out embodiments, no overlap")
 
 
-def load_cache():
-    if not CACHE.exists():
-        raise FileNotFoundError(
-            f"{CACHE} missing -- run pretrain_siglip_eefpairs.py once to build the image cache.")
-    log(f"loading image cache {CACHE} (53 GB, takes a minute) ...")
-    return torch.load(CACHE)
+def load_cache(subsets: list[str] | None = None):
+    path = cache_path(list(subsets or SUBSETS))
+    if not path.exists():
+        raise FileNotFoundError(f"{path} missing -- build it with tools/build_motion_cache.py")
+    log(f"loading image cache {path} ({path.stat().st_size / 1e9:.0f} GB, takes a minute) ...")
+    return torch.load(path)
 
 
 def load_images(cache, positions, device):

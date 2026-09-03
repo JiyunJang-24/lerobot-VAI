@@ -39,18 +39,19 @@ from lerobot.scripts.motion_data import (  # noqa: E402
     verify_reconstruction,
 )
 
-N_POSES, N_SUB, N_BG, N_VIEW = 48, 4, 12, 4
+N_BG, N_VIEW = 12, 4
 
 
 def log(msg: str) -> None:
     print(f"[motion] {msg}", flush=True)
 
 
-def build_index(table):
+def build_index(table, subsets):
     """[embodiment, pose, subset, background, view] -> cache position, or -1 where not rendered."""
     n_emb = int(table.embodiment.max()) + 1
-    index = np.full((n_emb, N_POSES, N_SUB, N_BG, N_VIEW), -1, dtype=np.int64)
-    sub_id = {s: i for i, s in enumerate(SUBSETS)}
+    n_pose = int(table.pose.max()) + 1
+    index = np.full((n_emb, n_pose, len(subsets), N_BG, N_VIEW), -1, dtype=np.int64)
+    sub_id = {s: i for i, s in enumerate(subsets)}
     index[
         table.embodiment.to_numpy(), table.pose.to_numpy(),
         table.subset.map(sub_id).to_numpy(), table.background.to_numpy(), table.view.to_numpy(),
@@ -113,6 +114,7 @@ def encode(tower, images, chunk=16):
 
 
 def make_sampler(index, pairs, embodiments, rng, allow_gripper_change: bool):
+    n_sub = index.shape[2]
     """Draw (embodiment, pose_i, pose_j, subset_t, subset_h, bg, view) that are actually rendered."""
     def draw(n):
         out = np.empty((n, 7), dtype=np.int64)
@@ -121,8 +123,8 @@ def make_sampler(index, pairs, embodiments, rng, allow_gripper_change: bool):
             k = (n - filled) * 3
             emb = rng.choice(embodiments, size=k)
             pair = pairs[rng.integers(0, len(pairs), size=k)]
-            sub_t = rng.integers(0, N_SUB, size=k)
-            sub_h = sub_t if not allow_gripper_change else rng.integers(0, N_SUB, size=k)
+            sub_t = rng.integers(0, n_sub, size=k)
+            sub_h = sub_t if not allow_gripper_change else rng.integers(0, n_sub, size=k)
             bg = rng.integers(0, N_BG, size=k)
             view = rng.integers(0, N_VIEW, size=k)
             pos_t = index[emb, pair[:, 0], sub_t, bg, view]
@@ -186,6 +188,11 @@ def evaluate(tower, head, index, pairs, states, embodiments, cache, device, rng,
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tag", required=True)
+    ap.add_argument("--subsets", default=",".join(SUBSETS),
+                    help="comma-separated eef_pairs subsets; must match a built image cache")
+    ap.add_argument("--limit-poses", type=int, default=0,
+                    help="use only N of the available poses. The pose ladder subsamples WITHIN one "
+                         "subset so no cross-export render difference can confound it.")
     ap.add_argument("--tower", default="", help="empty = stock SigLIP")
     ap.add_argument("--heldout-embodiments", default="0,1,3,8,12,14,23,27,28,33,34,36,42,49")
     ap.add_argument("--num-embodiments", type=int, default=0, help="0 = all non-held-out")
@@ -212,11 +219,25 @@ def main() -> int:
     out_dir = Path(args.output_dir) / args.tag
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    table = build_table()
+    subsets = args.subsets.split(",")
+    table = build_table(subsets)
     states = pose_states(table)
-    index = build_index(table)
+    index = build_index(table, subsets)
+    n_pose_all = len(states)
+    if args.limit_poses and args.limit_poses < n_pose_all:
+        keep = np.sort(rng.choice(n_pose_all, size=args.limit_poses, replace=False))
+        mask = np.zeros(n_pose_all, dtype=bool)
+        mask[keep] = True
+        log(f"pose ladder: using {args.limit_poses} of {n_pose_all} poses")
+    else:
+        mask = np.ones(n_pose_all, dtype=bool)
+        log(f"using all {n_pose_all} poses")
 
-    pairs = sample_pose_pairs(states, args.pose_pairs, args.motion_horizon, rng)
+    pairs = sample_pose_pairs(states, 10 ** 9, args.motion_horizon, rng)
+    pairs = pairs[mask[pairs[:, 0]] & mask[pairs[:, 1]]]
+    if len(pairs) > args.pose_pairs:
+        pairs = pairs[rng.choice(len(pairs), size=args.pose_pairs, replace=False)]
+    log(f"{len(pairs)} pose pairs after the pose limit and the {args.motion_horizon} m cap")
     if args.max_rot_deg < 180:
         _, q_rel = motion_labels(states, pairs)
         pairs = pairs[quat_angle_deg(q_rel) <= args.max_rot_deg]
@@ -243,7 +264,7 @@ def main() -> int:
     epochs = budget / (args.steps * args.batch_size)
     log(f"protocol {protocol}  ->  {epochs:.2f} passes over the sample budget")
 
-    cache = load_cache()
+    cache = load_cache(subsets)
     tower = load_tower(args.tower, device)
     head = MotionHead(int(tower.config.hidden_size)).to(device)
     if args.freeze_tower:
@@ -334,6 +355,7 @@ def main() -> int:
 
     summary = {
         "tag": args.tag, "args": vars(args), "protocol": protocol,
+        "n_poses_used": int(mask.sum()), "n_poses_available": int(n_pose_all),
         "n_train_embodiments": len(train_emb), "train_embodiments": train_emb,
         "heldout_embodiments": heldout, "n_pairs_pool": int(len(pairs)),
         "n_samples": int(len(pool)),
@@ -344,6 +366,12 @@ def main() -> int:
     }
     (out_dir / "results.json").write_text(json.dumps(summary, indent=2, default=str))
     torch.save({"head": head.state_dict()}, out_dir / "motion_head.pt")
+    # Save the tower too, so the real-data experiments can start from what this learned rather
+    # than only from the head. That transfer IS the hypothesis, end to end.
+    from safetensors.torch import save_file
+
+    save_file({k: v.contiguous() for k, v in tower.state_dict().items()},
+              out_dir / "vision_tower.safetensors")
 
     log(f"{'split':<10}{'trans MAE':>12}{'dir cos':>10}{'rot deg':>10}{'grip acc':>10}")
     for row in (summary["seen"], summary["heldout"]):
