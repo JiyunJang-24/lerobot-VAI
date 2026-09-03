@@ -1192,7 +1192,51 @@ opposite of the intuitive ordering, on 140 samples with no repeat — noise, not
 **To make (b) conclusive**: all 108 episodes at a denser stride (738 pairs is the binding
 constraint), a base-frame target, and 2–3 seeds. All cheap.
 
-### 10.8 Known limits of this design
+### 10.8 Would more data help? Which axis you add matters more than how much
+
+Three different things get called "more data" here and the measured answers differ:
+
+| axis | measured? | answer |
+|---|---|---|
+| more **samples** (same poses, same embodiments) | yes, 10.5 | **no** — protocol A carries 2.8× protocol B's data and the curves are identical at every rung |
+| more **embodiments** | yes, 10.5 | **yes** — 4.3× from 2 to 42, not flattened |
+| more **poses / motion vocabulary** | not yet | likely yes, and it removes a bottleneck flagged twice |
+
+**Pose count is a diversity axis, not a volume axis** — that is why it is expected to behave like the
+embodiment axis rather than the sample axis. `56combo_144_bg12_closed`
+(`ChiefJang/visual_robust_barx`) triples the poses, and reading the parquet alone shows what that
+buys before a single image is decoded:
+
+| | 48 poses | 144 poses | ratio |
+|---|---|---|---|
+| pairs within 0.15 m | 1,262 | 7,772 | 6.2× |
+| … and rotation ≤ 45° | 458 | 4,048 | 8.8× |
+| … and rotation ≤ 30° (10.6's cap) | **270** | **2,100** | **7.8×** |
+| … and rotation ≤ 20° | 96 | 946 | 9.9× |
+| … and rotation ≤ 10° (real-trajectory scale) | **18** | **186** | 10.3× |
+| workspace span x/y/z (m) | 0.26 / 0.096 / 0.258 | 0.296 / 0.160 / 0.445 | z 1.7×, y 1.7× |
+
+**The gain is largest exactly where the constraint was tightest.** Section 10.3 had to cap synthetic
+rotation at 30° to resemble real trajectories, and that left 270 pose pairs — the reason it was
+recorded as "costs vocabulary". It becomes 2,100. The ≤10° regime that actually matches real motion
+(~9°) goes from 18 pairs, which is unusable, to 186. And the poses are not merely denser: the
+workspace is 1.7× taller and wider.
+
+**BLOCKED: the 144 subset has no `videos/` on the hub.** `data/`, `meta/` and a partial
+`raw_images/` (99 PNGs of episode 0 only) are there; the mp4s are not, while
+`56combo_48_bg12_closed_furniture` in the same repo does have them. 231,678 frames are declared and
+none can be decoded. `tools/`-side everything is ready; a watcher polls every 20 min
+(`outputs/logs/watch144.log`) and will pull, convert and cache automatically.
+
+Also note it is **closed-gripper only**, so gripper-change supervision needs the matching
+`_open` / `_furniture` subsets at 144 before experiment 3's full objective can use it.
+
+**The experiment to run once the videos land** is the pose ladder, exactly parallel to the
+embodiment ladder and using the same protocol-B logic: fix embodiments at 42, fix total samples, and
+vary pose count 48 / 96 / 144 within the SAME subset — so no cross-export render difference can
+confound it.
+
+### 10.9 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
   no name mapping in the export, so "novel arm + seen gripper" vs "seen arm + novel gripper" cannot
