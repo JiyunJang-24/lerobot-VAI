@@ -1113,9 +1113,32 @@ It never saw a UR5e demonstration and scores **0.0355** on UR5e, against **0.036
 it trained on. Held-out is not worse than seen. Whatever this metric measures, a UR5e demonstration
 is worth roughly nothing on it — so it has almost no headroom in which any method could show an
 improvement, and the three arms landing within 6% of each other is what an insensitive metric looks
-like, not necessarily what a failed hypothesis looks like. Two controls are running to settle it:
-`D_headroom` (vanilla WITH UR5e in training — the floor the held-out number could ever reach) and
-second seeds of A and C (the 6% spread means nothing until seed noise is known).
+like, not necessarily what a failed hypothesis looks like. Two controls settle it — below.
+
+**The controls came back and they settle it — the metric cannot answer Q3.**
+(`outputs/exp3_headroom.png`)
+
+| quantity | value |
+|---|---|
+| UR5e action loss **with** its own demonstrations (`D_headroom`) | 0.0348 |
+| UR5e action loss **without** any (`A_vanilla`) | 0.0355 |
+| **total headroom — what a UR5e demonstration is worth** | **0.0007** |
+| seed-to-seed spread on the same arm (`C` vs `C_s1`) | **0.0021** |
+| the A-vs-C effect the null was about | 0.0018 |
+
+**The noise is 3× the entire headroom, and larger than the effect being claimed.** No method could
+have demonstrated anything here: even a perfect one could only have moved 0.0007, which is a third
+of the run-to-run variation. So experiment 3 is not evidence against the hypothesis — it is a
+measurement with no resolution. Report it that way; calling it a negative result would be wrong.
+
+Second seeds also flip the seen-robot ordering (`A_vanilla` IIWA 0.0316 → 0.0361 at seed 1, Panda
+0.0368 → 0.0337), which is the same warning in another form: per-robot differences at this scale
+are seed artefacts.
+
+*Why the headroom is so small* is worth understanding, because it is not a bug. The action space is
+a normalised delta convention shared across all three robots and the task motion is nearly the same
+for each, so predicting UR5e actions barely requires having seen UR5e. A metric that a held-out
+robot already scores well on cannot show that transfer improved.
 
 **This is the same wall as section 9.1**: action loss keeps failing to discriminate, and there is
 still no task-success evaluation anywhere in this repo. Q1 and Q2 got clean answers because motion
