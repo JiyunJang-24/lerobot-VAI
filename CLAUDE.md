@@ -1145,7 +1145,54 @@ still no task-success evaluation anywhere in this repo. Q1 and Q2 got clean answ
 prediction has a real metric. Q3 does not yet, and standing up a RoboCasa rollout is now the single
 highest-value thing left — without it Q3 cannot be answered either way.
 
-### 10.7 Known limits of this design
+### 10.7 The Jaco experiments — TWO different tasks, do not conflate them
+
+The re-export added `eef_pixel` / `eef_in_frame`. Taking it needed care: it is v2.1 while the local
+trees are v3.0, and the re-exported `info.json` for the visual-robust tree declares only 3 image
+features where the local one declares 6 — **Jaco among the 3 it drops**. So only the new parquet was
+pulled and joined on `(episode_index, frame_index)` into the local v3.0 files, all four trees at
+100% (`tools/merge_eef_pixel_columns.py`; hub limit is 1000 requests / 5 min, back off on 429).
+
+**A loading bug came with it.** Out-of-frame rows store the pixel as arrow null LIST ELEMENTS — the
+column's own `null_count` is 0, so it looks clean, and pandas hides it further by showing
+`array([nan, nan])`. The `datasets` library yields `[None, None]` and `hf_transform_to_torch` dies
+on the first out-of-frame row read. Invisible until a specific row is touched. Fixing it needs
+pyarrow: assigning the NaN array through pandas and calling `to_parquet` silently turns every NaN
+back into a null. `tools/normalise_eef_pixel_nulls.py` — run it if these trees ever fail to load.
+
+`visual_robust_new_barx_ur5e` renders the same 108 episodes from 6 NAMED embodiments, and
+`observation.state` / `eef_pixel` are shared across all of them, so the label is identical and only
+the robot's appearance changes. **It finally supplies the three held-out categories the brief asked
+for**, which the integer `embodiment_index` on eef_pairs cannot.
+
+| | task | seen | held-out Jaco | baseline |
+|---|---|---|---|---|
+| **10.7a pixel** | ONE image → where is the gripper | 11.4 px | **14.6 px** | 55 px zero-shot |
+| **10.7b motion** | TWO images → Cartesian delta | 3.30 cm | **3.89 cm** | 5.23 cm |
+
+**(a) One image, gripper location.** Zero-shot the synthetic head scores 50–63 px on these real
+frames against 3–5 px in its own domain — confirming 9.5 *directly with ground truth*, where before
+it could only be inferred by fitting a camera to the head's own predictions. The failure is uniform
+across all six embodiments, so it is the scene domain and not morphology, exactly as 9.5 predicted.
+Trained on the four non-Jaco embodiments it reaches 11.4 px, and 14.6 px on an arm never seen — 29%
+worse, not broken.
+
+**(b) Two images, the motion between them.** This is the experiment-1 task, on real trajectories,
+and it had NOT been run on Jaco before (eef_pairs has no Jaco). Translation transfers: 3.30 → 3.89
+cm against a 5.23 cm predict-the-mean baseline, direction cosine 0.699 → 0.587. **But this is far
+short of experiment 1's 0.67 cm / 0.980, and the two are not comparable** — 738 training pairs here
+against 168,000, a world-frame target with per-episode base yaw against a clean base-frame one, 2000
+steps against 6000. The gap is the setup, not Jaco.
+
+**Rotation is not learned at all here**: 9.0–9.4° against an 8.8° identity baseline, i.e. worse than
+predicting no rotation. Real rotation over 25 frames averages ~7°, far subtler than the synthetic
+pairs' 60°. And novel-arm+novel-gripper (3.57 cm) beats novel-arm+seen-gripper (4.22 cm), the
+opposite of the intuitive ordering, on 140 samples with no repeat — noise, not a finding.
+
+**To make (b) conclusive**: all 108 episodes at a denser stride (738 pairs is the binding
+constraint), a base-frame target, and 2–3 seeds. All cheap.
+
+### 10.8 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
   no name mapping in the export, so "novel arm + seen gripper" vs "seen arm + novel gripper" cannot
