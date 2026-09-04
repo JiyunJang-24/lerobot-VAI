@@ -91,6 +91,19 @@ def build_pairs(max_episodes: int, horizon: int, stride: int):
 
 
 def decode(embodiment: str, rows: np.ndarray) -> dict:
+    """Decoded frames, cached in /dev/shm and shared across runs.
+
+    Each run needs the same ~8k frames from all six embodiments, and decoding is ~11 fps, so five
+    runs decoding independently is 6 CPU-hours of duplicated work -- and running them concurrently
+    is what drove load average past 500 before. The cache key includes the row set, so a different
+    episode/stride choice cannot silently reuse the wrong frames.
+    """
+    import hashlib
+
+    digest = hashlib.md5(rows.tobytes()).hexdigest()[:12]  # noqa: S324 - cache key, not security
+    path = Path("/dev/shm") / f"jaco_frames_{embodiment}_{digest}.pt"
+    if path.exists():
+        return torch.load(path)
     key = f"observation.images.{embodiment}.robot0_agentview_right"
     dataset = LeRobotDataset(REPO_ID, root=VR)
     out = {}
@@ -98,6 +111,7 @@ def decode(embodiment: str, rows: np.ndarray) -> dict:
         frame = dataset[int(row)][key]
         frame = frame[-1] if frame.ndim == 4 else frame
         out[int(row)] = (frame * 255).round().clamp(0, 255).to(torch.uint8)
+    torch.save(out, path)
     return out
 
 

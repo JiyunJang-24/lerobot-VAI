@@ -1231,10 +1231,32 @@ none can be decoded. `tools/`-side everything is ready; a watcher polls every 20
 Also note it is **closed-gripper only**, so gripper-change supervision needs the matching
 `_open` / `_furniture` subsets at 144 before experiment 3's full objective can use it.
 
-**The experiment to run once the videos land** is the pose ladder, exactly parallel to the
-embodiment ladder and using the same protocol-B logic: fix embodiments at 42, fix total samples, and
-vary pose count 48 / 96 / 144 within the SAME subset — so no cross-export render difference can
-confound it.
+**RESULT: pose diversity helps, and it helps a lot — but only a common-eval comparison shows it.**
+42 embodiments and 60,000 samples held fixed, pose count subsampled WITHIN `56combo_144_bg12_closed`
+so no cross-export render difference can confound it. Figure: `outputs/pose_ladder.png`.
+
+| poses trained on | scored on its OWN pose set | **scored on ONE common pool** | dir cos | rotation |
+|---|---|---|---|---|
+| 48 | 0.60 cm | **2.18 cm** | 0.851 | 23.6° |
+| 96 | 0.74 cm | **1.13 cm** | 0.953 | 16.0° |
+| 144 | 0.84 cm | **0.83 cm** | 0.978 | 14.3° |
+| predict-the-mean | — | 4.90 cm | — | — |
+
+**The raw column runs the wrong way and is a trap.** Each ladder run was scored on pairs drawn from
+its own pose subset, so the 48-pose run was tested on a far easier motion distribution — 936
+distinct pose pairs against 4000, over a narrower range of rotations. Read raw, it says "more poses
+is worse". It is measuring task difficulty, not model quality. This is the same shape of confound as
+the embodiment ladder's shrinking held-out set (9.4), and it is worth expecting: **any ladder that
+varies the data also varies the test set unless you force it not to.**
+
+Scored on one common pool — 4000 pairs from all 144 poses, on held-out embodiments,
+`tools/eval_pose_ladder_common.py` — the ordering reverses and the effect is large: **2.6× better
+translation from 48 to 144 poses**, direction cosine 0.851 → 0.978, rotation 23.6° → 14.3°. Pose
+diversity behaves like the embodiment axis, not like the sample axis, which is what 10.8 predicted.
+
+Note the 144-pose number is nearly identical in both columns (0.84 vs 0.83) — as it must be, since
+for that run "its own pose set" and "the common pool" are the same thing. That agreement is the
+check that the two evaluations are otherwise comparable.
 
 ### 10.9 Known limits of this design
 
