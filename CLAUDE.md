@@ -1290,7 +1290,63 @@ Note the 144-pose number is nearly identical in both columns (0.84 vs 0.83) — 
 for that run "its own pose set" and "the common pool" are the same thing. That agreement is the
 check that the two evaluations are otherwise comparable.
 
-### 10.9 Known limits of this design
+### 10.9 LAP-style language ground truth for the motion task (`motion_language.py`)
+
+**Why**: 10.7b found the regression head transfers *direction* to a novel arm but not *magnitude* —
+direction cosine 0.712 → 0.756 with seed ranges separated, while MAE 2.82 → 2.90 overlaps. Pixel
+displacement scale depends on how large the arm looks and how it is framed, which is exactly what a
+new morphology changes. Language quantises magnitude into three buckets — a coarser claim that may
+survive an appearance change when centimetres do not. That is the thing worth testing, and it is
+also what would let the **VLM** (362M text model) learn this task rather than only the 86M tower.
+
+```
+"move forward moderately, move right slightly, turn left slightly, close gripper"
+```
+
+**The label set is healthy, which is not automatic.** Section 8 records the earlier LAP objective
+saturating — content accuracy 1.000 by 15k steps on 7.72 bits, after which the VLM got no gradient
+at all. These labels are far richer because they describe a free 25-frame displacement rather than
+an action chunk:
+
+| corpus | labels | distinct | entropy | top-1 share |
+|---|---|---|---|---|
+| earlier LAP (§8) | — | 525 | 7.72 bits | 2.7% |
+| synthetic, closed only | 6,000 | 4,095 | **11.78 bits** | 0.2% |
+| **synthetic, closed + open** | 8,000 | **6,152** | **12.44 bits** | **0.1%** |
+| real trajectories | 4,334 | 2,718 | 10.93 bits | 1.3% |
+
+Use **closed + open**: the two subsets carry byte-identical pose values (verified, max diff 0.0) and
+differ only in gripper, so pairing across them is what produces the `open/close gripper` words at
+all. Closed alone yields 13 content words and no gripper vocabulary; together, 15 words with the
+gripper mentioned in 50.6% of labels.
+
+**Frames — direction words are only meaningful in a frame the model can see.** eef_pairs already
+uses one fixed frame across every embodiment, so `frame="fixed"`. The real trajectories store WORLD
+xyz with the base parked differently per episode (1.52 m of cross-episode spread in x, and net
+motion that flips sign), so world-frame words would be noise; `frame="eef"` rotates the displacement
+into the gripper's own frame at time t, which is episode-independent and visible in the image.
+
+**Translation transfers, rotation does not — and the thresholds say so before any training.**
+Fitted as quantiles of each corpus independently:
+
+| | synthetic | real | |
+|---|---|---|---|
+| translation idle / slight / moderate | 0.028 / 0.073 / 0.110 m | 0.026 / 0.072 / 0.107 m | **agree to 7%** |
+| rotation idle / slight / moderate | 9.7° / 29.2° / 63.8° | 1.0° / 3.9° / 8.8° | **7× apart** |
+
+The translation buckets landing on top of each other means "move forward moderately" denotes the
+same physical displacement in both corpora — so a VLM pre-trained on synthetic translation language
+is answering the same question on real data. The rotation buckets do not: "roll left moderately"
+means 29° synthetically and 3.9° really. That is 10.3's rotation mismatch reappearing, and it lines
+up with 10.7b measuring rotation never being learned in the real domain at all (6/6 runs worse than
+predicting no rotation). **Treat the rotation words as untrusted for transfer**; the translation and
+gripper words are the ones with evidence behind them.
+
+```bash
+python tools/preview_motion_language.py     # label stats, thresholds and vocabulary agreement
+```
+
+### 10.10 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
   no name mapping in the export, so "novel arm + seen gripper" vs "seen arm + novel gripper" cannot
