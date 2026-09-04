@@ -1189,8 +1189,40 @@ predicting no rotation. Real rotation over 25 frames averages ~7°, far subtler 
 pairs' 60°. And novel-arm+novel-gripper (3.57 cm) beats novel-arm+seen-gripper (4.22 cm), the
 opposite of the intuitive ordering, on 140 samples with no repeat — noise, not a finding.
 
-**To make (b) conclusive**: all 108 episodes at a denser stride (738 pairs is the binding
-constraint), a base-frame target, and 2–3 seeds. All cheap.
+**Done — (b) redone properly, and the answer changed.** All 108 episodes at stride 12 instead of 40
+episodes at stride 40, plus 3 seeds and a synthetic-pre-training arm
+(`outputs/jaco_pretrain.png`, `tools/eval_jaco_motion.py --init-from`):
+
+| | stock tower, 3 seeds | **synthetic-144 pre-trained, 3 seeds** | seed ranges |
+|---|---|---|---|
+| seen translation MAE | 1.84 cm [1.74–1.94] | **1.47 cm** [1.44–1.51] | **separated** |
+| seen direction cos | 0.884 [0.881–0.890] | **0.921** [0.916–0.925] | **separated** |
+| held-out Jaco MAE | 2.82 cm [2.69–2.96] | 2.90 cm [2.84–2.99] | overlap |
+| **held-out Jaco direction cos** | 0.712 [0.691–0.732] | **0.756** [0.738–0.782] | **separated** |
+| held-out Jaco rotation | 6.0° [5.8–6.2] | 6.2° [5.8–6.6] | overlap |
+| baselines | 4.89 cm / 5.4° identity rotation | | |
+
+First, **more data was worth a lot**: the earlier 738-pair run gave 3.30 cm seen / 3.89 cm Jaco, and
+this gives 1.84 / 2.82 with the same code. The binding constraint really was pair count.
+
+**Synthetic motion pre-training transfers, but only partly, and the split is the interesting part.**
+On embodiments it trains on it is unambiguous — 20% lower error with non-overlapping seed ranges.
+On the *novel arm* it improves **direction** (0.712 → 0.756, ranges separated) while leaving
+**magnitude** unchanged (2.82 → 2.90, ranges overlapping). So what carries across morphology is
+*which way the gripper went*, not *how far*. That is consistent with 9.5's finding that the tower
+encodes camera geometry strongly: the scale of a displacement in pixels depends on the arm's
+apparent size and how it is framed, and those are exactly what a novel arm changes.
+
+**Rotation is never learned in the real domain, in any of the six runs**: 5.8–6.6° against a 5.4°
+identity baseline — worse than predicting no rotation at all. Real motion rotates ~5° over 25
+frames, and no amount of the data available here recovers it. Any claim about rotation transfer is
+unsupported; that is now checked with 6 runs rather than 1.
+
+The earlier oddity that novel-arm+novel-gripper beat novel-arm+seen-gripper survives at 3 seeds
+(JacoOmron 2.65 ± 0.11 vs JacoOmronPandaGripper 3.00 ± 0.11 for the stock tower), so it is real
+rather than noise — but the two Jaco variants differ in gripper only, so "novel gripper is easier"
+is not a sensible reading. More likely the Panda gripper on a Jaco arm is the visually stranger
+object of the two.
 
 ### 10.8 Would more data help? Which axis you add matters more than how much
 
