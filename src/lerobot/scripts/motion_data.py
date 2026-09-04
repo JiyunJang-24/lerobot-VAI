@@ -90,13 +90,16 @@ def build_table(subsets: list[str] | None = None) -> pd.DataFrame:
             pd.read_parquet(f, columns=[
                 "episode_index", "frame_index", "observation.embodiment_index",
                 "observation.background_index", "observation.camera_view_index",
-                "observation.state",
+                "observation.color_variant_index", "observation.state",
             ]) for f in files
         ], ignore_index=True)
         table = table.rename(columns={
             "observation.embodiment_index": "embodiment",
             "observation.background_index": "background",
             "observation.camera_view_index": "view",
+            # cv 0/1/2 repaint the SAME arm silver / yellow / pink, so this is part of the robot,
+            # not the scene, and every (embodiment, pose, subset, bg, view) has three of them.
+            "observation.color_variant_index": "color",
         })
         lengths = table.groupby("episode_index").size().sort_index()
         starts = lengths.cumsum().shift(fill_value=0)

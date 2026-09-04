@@ -50,11 +50,16 @@ def build_index(table, subsets):
     """[embodiment, pose, subset, background, view] -> cache position, or -1 where not rendered."""
     n_emb = int(table.embodiment.max()) + 1
     n_pose = int(table.pose.max()) + 1
-    index = np.full((n_emb, n_pose, len(subsets), N_BG, N_VIEW), -1, dtype=np.int64)
+    n_color = int(table.color.max()) + 1
+    # The colour axis is REQUIRED, not optional. Without it, three rows -- the three robot paint
+    # jobs -- collapse into one cell and only the last survives, so two thirds of every render is
+    # unreachable and a pair drawn across two cells can silently change the robot's colour.
+    index = np.full((n_emb, n_pose, len(subsets), N_BG, N_VIEW, n_color), -1, dtype=np.int64)
     sub_id = {s: i for i, s in enumerate(subsets)}
     index[
         table.embodiment.to_numpy(), table.pose.to_numpy(),
         table.subset.map(sub_id).to_numpy(), table.background.to_numpy(), table.view.to_numpy(),
+        table.color.to_numpy(),
     ] = table.cache_pos.to_numpy()
     filled = (index >= 0).mean()
     log(f"render index: {index.shape}, {100 * filled:.0f}% of combinations rendered")
@@ -123,8 +128,15 @@ def make_sampler(index, pairs, embodiments, rng, allow_gripper_change: bool):
             k = (n - filled) * 3
             emb = rng.choice(embodiments, size=k)
             pair = pairs[rng.integers(0, len(pairs), size=k)]
-            sub_t = rng.integers(0, n_sub, size=k)
-            sub_h = sub_t if not allow_gripper_change else rng.integers(0, n_sub, size=k)
+            # Subsets are ordered [closed, open, closed_furniture, open_furniture], so bit 1 is
+            # the furniture variant and bit 0 is the gripper. The furniture must be IDENTICAL in
+            # both frames -- the kitchen does not get repainted mid-motion, and letting it change
+            # inserts a scene change unrelated to the motion being labelled. The gripper may
+            # differ, because opening or closing it IS part of the motion.
+            furniture = rng.integers(0, max(1, n_sub // 2), size=k) * 2
+            sub_t = furniture + rng.integers(0, min(2, n_sub), size=k)
+            sub_h = furniture + (rng.integers(0, min(2, n_sub), size=k)
+                                 if allow_gripper_change else sub_t - furniture)
             bg = rng.integers(0, N_BG, size=k)
             view = rng.integers(0, N_VIEW, size=k)
             pos_t = index[emb, pair[:, 0], sub_t, bg, view]
