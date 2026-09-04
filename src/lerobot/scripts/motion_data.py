@@ -192,8 +192,10 @@ def load_cache(subsets: list[str] | None = None):
     path = cache_path(list(subsets or SUBSETS))
     if not path.exists():
         raise FileNotFoundError(f"{path} missing -- build it with tools/build_motion_cache.py")
-    log(f"loading image cache {path} ({path.stat().st_size / 1e9:.0f} GB, takes a minute) ...")
-    return torch.load(path)
+    # mmap=True: the cache is 154 GB and several trainers run at once, so a per-process copy
+    # would exhaust RAM. Pages are shared and faulted in on demand instead, and loading is instant.
+    log(f"mapping image cache {path} ({path.stat().st_size / 1e9:.0f} GB)")
+    return torch.load(path, mmap=True)
 
 
 def load_images(cache, positions, device):
