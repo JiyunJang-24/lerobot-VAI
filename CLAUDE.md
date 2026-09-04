@@ -1365,23 +1365,31 @@ carry zero information about the motion label — the shortcut is impossible by 
 than by sampling luck. When moving to sampled pairs, draw the pose pairs ONCE and render every
 embodiment at them.
 
-**The camera fix is not simply "randomise it"** — that was my first recommendation and it is only
-half right. Within a pair the camera must always be identical, or camera motion and robot motion mix
-and the label stops being recoverable. Between samples, three options:
+**The design settled on: hold everything fixed except the robot's motion.** One camera — the
+deployment camera, RoboCasa `robot0_agentview_right` — one lighting setup, one scene. Vary only EEF
+pose, gripper, and embodiment. My first instinct was to *randomise* the camera; that is only half
+right, and the budget arithmetic is what decides it.
 
-* **A — match the deployment camera exactly** (RoboCasa `robot0_agentview_right`, base-mounted).
-  Best here, because the target setup is known and singular: it removes the domain gap rather than
-  asking the model to bridge it. Today's 4 arbitrary views match nothing, which is the worst case.
-* **B — vary the camera continuously AND express the delta in the CAMERA frame.** A new camera is
-  then just a new frame, nothing is memorised per view, and since the target camera is base-mounted
-  a camera-frame label is close to the base-frame action the policy wants. Best if the data must
-  serve setups not yet chosen.
-* **C — vary the camera with world-frame labels: do not.** That is today's design with more views,
-  and it makes the task ambiguous.
+Three measurements support the fixed design:
 
-**If only one thing changes, fix the camera** — most likely option A. Every measurement points
-there, and the axes one would intuitively add first — more embodiments, more backgrounds — are
-already flat at 1–4%.
+1. **The nuisance axes were never doing much work** — background 1%, furniture 2%, a different
+   *robot* 4% feature displacement. Dropping them costs almost nothing. The 31–41% axis is camera
+   geometry, and fixing the camera removes it outright.
+2. **The 4 views are not interchangeable** (the 1.6×–7× pixel-displacement spread above), so with a
+   world-frame label the model must identify the view first — and 4 is few enough to memorise.
+3. **The budget.** Today 893,270 frames = **111 renders per (pose, embodiment)**, spent on 12
+   background/view combinations × 3 colours × 2 gripper × 2 furniture. Under the fixed design only
+   the 2 gripper states remain, so the same render count buys **55× more poses: 144 → ~8,000**.
+   Motion pairs grow with roughly the square of pose count, so the motion-vocabulary ceiling
+   disappears. Pose diversity is the axis the task is actually about.
+
+Within a pair the camera must be identical regardless of design — otherwise camera motion and robot
+motion mix in the image and the label stops being recoverable at all. And export the camera
+parameters even when fixed, so a varied-camera design is reachable later without re-rendering.
+
+**Order of value if only part gets done**: match the deployment camera → sample local motion pairs
+and spend the freed budget on pose count → resolution. The axes one reaches for first, more
+embodiments and more backgrounds, are already flat at 1–4%.
 
 ### 10.11 Known limits of this design
 
