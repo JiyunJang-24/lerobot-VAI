@@ -1391,7 +1391,60 @@ parameters even when fixed, so a varied-camera design is reachable later without
 and spend the freed budget on pose count → resolution. The axes one reaches for first, more
 embodiments and more backgrounds, are already flat at 1–4%.
 
-### 10.11 Known limits of this design
+### 10.11 VLM baseline — it learns something, but nothing like enough
+
+`train_vlm_motion.py` + `tools/eval_vlm_motion.py`. Two images plus the question into SmolVLM2-500M,
+a LAP-style sentence out, cross-entropy on the answer tokens only. 4000 steps, 4 variants, all 8
+GPUs. Scores are clause-level Jaccard — "move left slightly" is one claim, not three words.
+
+| run | SYN held-out, all | SYN held-out, translation | REAL seen, translation | REAL Jaco, translation |
+|---|---|---|---|---|
+| **no training (stock)** | **0.000** | 0.010 | 0.115 | 0.115 |
+| **always emit the modal sentence** | **0.055** | — | — | — |
+| rot_on | **0.152** | 0.144 | 0.104 | 0.098 |
+| rot_on (seed 1) | 0.140 | 0.139 | 0.103 | 0.104 |
+| rot_off (no rotation words) | 0.111 | 0.151 | 0.098 | 0.105 |
+| novary (no bg/furniture aug) | 0.132 | 0.133 | 0.141 | 0.134 |
+
+**Read the two baselines first.** The stock VLM scores 0.000 because it writes prose, not the
+vocabulary ("the gripper moved … by picking up a green object"). But the honest floor is the
+*constant* baseline — always emitting the single most common training sentence — which scores
+**0.055**. Training gets to 0.152, so it beats both, but it is 2.8× a constant, not a solved task.
+
+**The model has partially mode-collapsed, and that is the real finding.** On 120 held-out samples
+whose ground truth contains **120 distinct sentences**, the model produced **40**, and one sentence
+covers 24% of its output:
+
+```
+"move forward slightly, move right slightly, move down slightly, roll left slightly, …"
+```
+
+It has learned the label distribution's marginal — everything is "slightly", mostly
+forward/right/down — rather than the image-conditional. CE plateaus at 0.5–0.7 and never drops
+further, which is consistent.
+
+**Beware the metric that made this look fine.** The in-training eval used a bag of *content words*
+and reported 0.508 held-out; the clause-level score on the same runs is 0.152. The gap is entirely
+credit for words like "slightly" that appear in nearly every label. Bag-of-words over a vocabulary
+this small is not a usable measure here — use clause matching.
+
+**Nothing transfers to real trajectories.** Every trained run scores 0.098–0.141 on real
+translation, against **0.115 for the untrained model**. Within noise of doing nothing. And the
+Jaco/seen split is flat (0.098 vs 0.104), so this is not a morphology failure — it is that nothing
+useful reached real images at all, which is what 9.5 and 10.10 predict from the camera-geometry gap.
+
+**What the variants say**: seed noise is ±0.012, so rot_on vs rot_on_s1 (0.152/0.140) is a tie.
+`rot_off` is no better, so rotation words are not what is holding it back. `novary` matches on
+synthetic and is nominally best on real, which is consistent with the background/furniture axes
+being measured at 1–2% — the augmentation is not earning its place.
+
+**Conclusion**: the VLM route is not refuted, but on *this* data it does not work, and the two
+diagnoses point the same way as everything else in section 10 — the motion vocabulary is too coarse
+and repetitive to force image-conditional answers, and the synthetic-to-real gap is camera geometry.
+Both are what the 10.10 redesign targets. Re-run this after the new renders before drawing any
+conclusion about VLMs.
+
+### 10.12 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
   no name mapping in the export, so "novel arm + seen gripper" vs "seen arm + novel gripper" cannot
