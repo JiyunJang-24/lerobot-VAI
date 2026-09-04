@@ -1346,7 +1346,29 @@ gripper words are the ones with evidence behind them.
 python tools/preview_motion_language.py     # label stats, thresholds and vocabulary agreement
 ```
 
-### 10.10 Known limits of this design
+### 10.10 What is wrong with the eef_pairs dataset itself
+
+Full spec with every supporting number: `outputs/dataset_redesign_spec.txt`. Ranked by what the
+measurements say is actually blocking, not by what looks wrong:
+
+| # | problem | the measurement | fix |
+|---|---|---|---|
+| **1** | **only 4 fixed camera poses** | gripper lands in 4 tight clusters ~200 px apart, each 12–22 px wide; a 40 px shift moves features **31%** toward an unrelated image while a different *robot* moves them 4% | randomise camera pose per episode; export extrinsics/intrinsics |
+| 2 | poses cover the workspace, not trajectory segments | pairs within 0.15 m still average **48°** rotation; real is 6.5° | sample s_t then a LOCAL delta_eef, as the brief said |
+| 3 | rotation is below visual resolution | 5° moves the gripper tip **0.87 px** = 1/11 of a patch; relative error 24% synthetic vs 95% real | higher resolution, or a wrist camera, or a longer horizon |
+| 4 | gripper is binary and encoded as a *subset* | 2 values; forces cross-subset pairing to get any gripper signal | continuous `gripper` column in one subset |
+| 5 | empty scene vs cluttered kitchen | a policy frame sits at **102%** of the unrelated-image distance | render into RoboCasa-like scenes with objects |
+| 6 | `embodiment_index` has no name mapping | — | ship `meta/embodiments.json` → {arm, gripper} |
+
+**Keep**: every embodiment posed at IDENTICAL EEF states. That is what makes embodiment identity
+carry zero information about the motion label — the shortcut is impossible by construction rather
+than by sampling luck. When moving to sampled pairs, draw the pose pairs ONCE and render every
+embodiment at them.
+
+**If only one thing changes, randomise the camera.** Every measurement points there, and the axes
+one would intuitively add first — more embodiments, more backgrounds — are already flat at 1–4%.
+
+### 10.11 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
   no name mapping in the export, so "novel arm + seen gripper" vs "seen arm + novel gripper" cannot
