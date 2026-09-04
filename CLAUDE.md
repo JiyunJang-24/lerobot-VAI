@@ -1353,7 +1353,7 @@ measurements say is actually blocking, not by what looks wrong:
 
 | # | problem | the measurement | fix |
 |---|---|---|---|
-| **1** | **only 4 fixed camera poses** | gripper lands in 4 tight clusters ~200 px apart, each 12–22 px wide; a 40 px shift moves features **31%** toward an unrelated image while a different *robot* moves them 4% | randomise camera pose per episode; export extrinsics/intrinsics |
+| **1** | **the camera** — only 4 poses, and `background_index` is *not independent*: `bg mod 4 == view`, so "12 backgrounds" is 4 views × 3 backdrops | gripper lands in 4 clusters ~200 px apart, each 12–22 px wide; the same 3-D delta gives pixel displacements differing **1.6× median, up to 7×** across views; a 40 px shift moves features **31%** toward an unrelated image while a different *robot* moves them 4% | see below — the fix depends on the label frame |
 | 2 | poses cover the workspace, not trajectory segments | pairs within 0.15 m still average **48°** rotation; real is 6.5° | sample s_t then a LOCAL delta_eef, as the brief said |
 | 3 | rotation is below visual resolution | 5° moves the gripper tip **0.87 px** = 1/11 of a patch; relative error 24% synthetic vs 95% real | higher resolution, or a wrist camera, or a longer horizon |
 | 4 | gripper is binary and encoded as a *subset* | 2 values; forces cross-subset pairing to get any gripper signal | continuous `gripper` column in one subset |
@@ -1365,8 +1365,23 @@ carry zero information about the motion label — the shortcut is impossible by 
 than by sampling luck. When moving to sampled pairs, draw the pose pairs ONCE and render every
 embodiment at them.
 
-**If only one thing changes, randomise the camera.** Every measurement points there, and the axes
-one would intuitively add first — more embodiments, more backgrounds — are already flat at 1–4%.
+**The camera fix is not simply "randomise it"** — that was my first recommendation and it is only
+half right. Within a pair the camera must always be identical, or camera motion and robot motion mix
+and the label stops being recoverable. Between samples, three options:
+
+* **A — match the deployment camera exactly** (RoboCasa `robot0_agentview_right`, base-mounted).
+  Best here, because the target setup is known and singular: it removes the domain gap rather than
+  asking the model to bridge it. Today's 4 arbitrary views match nothing, which is the worst case.
+* **B — vary the camera continuously AND express the delta in the CAMERA frame.** A new camera is
+  then just a new frame, nothing is memorised per view, and since the target camera is base-mounted
+  a camera-frame label is close to the base-frame action the policy wants. Best if the data must
+  serve setups not yet chosen.
+* **C — vary the camera with world-frame labels: do not.** That is today's design with more views,
+  and it makes the task ambiguous.
+
+**If only one thing changes, fix the camera** — most likely option A. Every measurement points
+there, and the axes one would intuitively add first — more embodiments, more backgrounds — are
+already flat at 1–4%.
 
 ### 10.11 Known limits of this design
 
