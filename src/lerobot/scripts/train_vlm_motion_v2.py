@@ -121,6 +121,9 @@ def main() -> int:
     ap.add_argument("--high", action="store_true")
     ap.add_argument("--frame", default="cam", choices=["cam", "world"])
     ap.add_argument("--n-heldout", type=int, default=14)
+    ap.add_argument("--holdout-axis", default="random", choices=["random", "arm", "gripper"],
+                    help="'arm' holds out every embodiment using a chosen arm, 'gripper' likewise. "
+                         "Possible for the first time now that embodiments.json ships names.")
     ap.add_argument("--steps", type=int, default=4000)
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--lr", type=float, default=1e-5)
@@ -139,7 +142,8 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     table = usable(build_table(args.subset))
-    train_emb, heldout = split_embodiments(table, args.n_heldout, seed=0)
+    train_emb, heldout = split_embodiments(table, args.n_heldout, seed=0,
+                                          subset=args.subset, axis=args.holdout_axis)
     names = embodiment_names(args.subset)
     if names:
         log(f"embodiment names available; held out e.g. "

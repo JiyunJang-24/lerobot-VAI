@@ -82,6 +82,11 @@ def main() -> int:
 
     import subprocess
 
+    # This export ships neither episodes_stats.jsonl nor stats.json, and the v2.1 -> v3.0
+    # converter dies on the missing path before touching any data. Generate them first; the
+    # older add_episode_stats_count.py only repairs a missing `count` inside an existing file.
+    if not (dest / "meta" / "episodes_stats.jsonl").exists():
+        subprocess.run([sys.executable, "tools/generate_episode_stats.py", str(dest)], check=True)
     subprocess.run([sys.executable, "tools/add_episode_stats_count.py", str(dest)], check=False)
     if json.loads((dest / "meta/info.json").read_text()).get("codebase_version") != "v3.0":
         from lerobot.datasets.v30.convert_dataset_v21_to_v30 import convert_dataset

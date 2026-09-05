@@ -105,11 +105,30 @@ def usable(table: pd.DataFrame) -> pd.DataFrame:
     return table[mask].reset_index(drop=True)
 
 
-def split_embodiments(table: pd.DataFrame, n_heldout: int, seed: int = 0):
-    """Random held-out split, plus the named split if the mapping exists."""
+def split_embodiments(table: pd.DataFrame, n_heldout: int, seed: int = 0,
+                      subset: str = DEFAULT, axis: str = "random"):
+    """Held-out split. axis="arm" or "gripper" holds out every embodiment using a chosen arm or
+    gripper, which is the split the whole project has wanted and could not build until this export
+    shipped meta/embodiments.json.
+    """
     embs = np.sort(table.embodiment.unique())
     rng = np.random.default_rng(seed)
-    heldout = sorted(int(e) for e in rng.choice(embs, size=n_heldout, replace=False))
+    names = embodiment_names(subset)
+    if axis in ("arm", "gripper") and names:
+        groups: dict = {}
+        for idx in embs:
+            key = names.get(str(int(idx)), {}).get(axis)
+            groups.setdefault(key, []).append(int(idx))
+        chosen, heldout = [], []
+        for key in rng.permutation(sorted(k for k in groups if k is not None)):
+            if len(heldout) >= n_heldout:
+                break
+            chosen.append(key)
+            heldout += groups[key]
+        heldout = sorted(heldout)
+        log(f"holding out every embodiment whose {axis} is in {chosen}: {heldout}")
+    else:
+        heldout = sorted(int(e) for e in rng.choice(embs, size=n_heldout, replace=False))
     train = sorted(int(e) for e in embs if e not in set(heldout))
     assert not (set(train) & set(heldout)), "held-out embodiments leaked into training"
     log(f"{len(train)} train / {len(heldout)} held-out embodiments, no overlap")
