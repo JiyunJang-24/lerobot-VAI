@@ -135,9 +135,57 @@ def split_embodiments(table: pd.DataFrame, n_heldout: int, seed: int = 0,
     return train, heldout
 
 
+def exclude(table: pd.DataFrame, arms=(), grippers=(), embodiments=(),
+            subset: str = DEFAULT) -> pd.DataFrame:
+    """Drop embodiments by name or index.
+
+    xarm7_gripper is excluded by default in the runners: its renders do not match its labels --
+    at an identical pose and camera the other grippers produce near-identical images while those
+    show the arm in unrelated configurations. The metadata is indistinguishable (same poses, same
+    0.951 visibility), so this is a silent image/label mismatch, which is the worst kind: nothing
+    in the numbers reveals it and training just quietly learns the wrong association.
+    """
+    names = embodiment_names(subset)
+    drop = {int(e) for e in embodiments}
+    if names and (arms or grippers):
+        for idx, meta in names.items():
+            if meta.get("arm") in set(arms) or meta.get("gripper") in set(grippers):
+                drop.add(int(idx))
+    if not drop:
+        return table
+    kept = table[~table.embodiment.isin(drop)].reset_index(drop=True)
+    log(f"excluded {len(drop)} embodiments ({sorted(drop)}) -> "
+        f"{kept.embodiment.nunique()} embodiments, {len(kept)} pairs")
+    return kept
+
+
 def load_cache(subset: str = DEFAULT, high: bool = False):
     path = cache_path(subset, high)
     if not path.exists():
         raise FileNotFoundError(f"{path} -- build it with tools/build_motion_cache_v2.py")
     log(f"mapping {path} ({path.stat().st_size / 1e9:.0f} GB)")
     return torch.load(path, mmap=True)
+
+
+def cached_table(table: pd.DataFrame, subset: str = DEFAULT, high: bool = False,
+                 limit_per_embodiment: int = 0) -> pd.DataFrame:
+    """Restrict a table to the rows a cache actually holds, and renumber cache_pos to match.
+
+    The high-resolution frames are ~8x the bytes, so that cache is built on a subset: slot i is the
+    i-th row of `groupby(embodiment).head(limit)` over the RAW table. Two things follow, and both
+    have to be reconstructed from the raw table rather than from whatever the caller has filtered:
+    the cache predates any `usable` or `exclude` filtering, so its numbering includes rows the
+    caller has since dropped. Deriving positions from the filtered table instead silently reads the
+    wrong images.
+    """
+    if not high:
+        return table
+    limit = limit_per_embodiment or 1200
+    raw = build_table(subset).sort_values(["embodiment", "row"]).reset_index(drop=True)
+    held = (raw.groupby("embodiment", group_keys=False)[list(raw.columns)]
+            .apply(lambda g: g.head(limit)).reset_index(drop=True))
+    held["cache_pos"] = np.arange(len(held))
+    keep = held[held["row"].isin(set(table["row"].tolist()))].reset_index(drop=True)
+    log(f"high-res cache: {len(held)} slots, {len(keep)} usable after filtering "
+        f"(max position {int(keep.cache_pos.max())})")
+    return keep

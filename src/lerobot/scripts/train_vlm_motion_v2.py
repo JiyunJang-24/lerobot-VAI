@@ -28,7 +28,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from lerobot.scripts.motion_data_v2 import (  # noqa: E402
-    DEFAULT, build_table, deltas, embodiment_names, load_cache, split_embodiments, usable,
+    DEFAULT, build_table, cached_table, deltas, embodiment_names, exclude, load_cache,
+    split_embodiments, usable,
 )
 from lerobot.scripts.motion_language import (  # noqa: E402
     MotionDescriber, fit_thresholds, quat_to_euler,
@@ -121,6 +122,10 @@ def main() -> int:
     ap.add_argument("--high", action="store_true")
     ap.add_argument("--frame", default="cam", choices=["cam", "world"])
     ap.add_argument("--n-heldout", type=int, default=14)
+    ap.add_argument("--exclude-grippers", default="xarm7_gripper",
+                    help="comma-separated grippers to drop entirely. xarm7_gripper by default: "
+                         "its renders do not match its labels (see motion_data_v2.exclude)")
+    ap.add_argument("--exclude-arms", default="")
     ap.add_argument("--holdout-axis", default="random", choices=["random", "arm", "gripper"],
                     help="'arm' holds out every embodiment using a chosen arm, 'gripper' likewise. "
                          "Possible for the first time now that embodiments.json ships names.")
@@ -142,6 +147,11 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     table = usable(build_table(args.subset))
+    table = exclude(table,
+                    arms=[a for a in args.exclude_arms.split(",") if a],
+                    grippers=[g for g in args.exclude_grippers.split(",") if g],
+                    subset=args.subset)
+    table = cached_table(table, args.subset, args.high)
     train_emb, heldout = split_embodiments(table, args.n_heldout, seed=0,
                                           subset=args.subset, axis=args.holdout_axis)
     names = embodiment_names(args.subset)
