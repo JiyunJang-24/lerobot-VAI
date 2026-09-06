@@ -1523,6 +1523,39 @@ occurred, and naming more components raises recall for free. Jaccard charges for
 it reads 0.19 rather than 0.60. Direction is learned far better than magnitude (0.600 vs 0.373),
 which is the clearest pointer to what to change — see `outputs/vlm_motion_v2_report.txt` §6.
 
+**Per-axis and per-magnitude breakdown — the model names every axis and always says "slightly".**
+Same `high` model, 400 seen samples, translation clauses only:
+
+| axis | truth mentions it | direction right | direction+magnitude | **names it when truth does NOT** |
+|---|---|---|---|---|
+| x forward/backward | 65% | 0.800 | 0.485 | **0.786** |
+| y left/right | 63% | 0.632 | 0.411 | **0.864** |
+| z up/down | 65% | 0.571 | 0.352 | **0.906** |
+
+| truth magnitude | n | direction right | **direction+magnitude** |
+|---|---|---|---|
+| slightly | 492 | 0.650 | **0.636** |
+| moderately | 200 | 0.655 | **0.045** |
+| far | 82 | 0.805 | **0.000** |
+
+Two things, and together they explain the whole 0.19.
+
+**It names essentially every axis every time** — when the truth says an axis did not move, the model
+claims it did 79–91% of the time. So "direction recall 0.600" is not discrimination, it is coverage.
+Only x is read meaningfully (0.800); z is 0.571, near the 0.5 floor for guessing a sign on an axis
+you always mention. Depth is the axis a single camera sees worst, and it is the worst here.
+
+**The magnitude word is essentially always "slightly."** Conditional on getting the direction right,
+magnitude is also right 98% of the time when the truth is "slightly", 7% when it is "moderately",
+and **0% when it is "far"** — it never emits the word. Magnitude is not learned at all; it is one
+constant.
+
+**Is the motion big enough to see?** Yes, that is not the problem. Median displacement is 0.090 m,
+which is **60 px at 910 width / 21 px at 320** — about one gripper width, and 41% of pairs exceed
+10 cm. Only 12% fall under 5 cm (9 px at 320). The signal is there; the label asks for a
+three-way decomposition plus a three-way magnitude on top of it, and the model answers the easy
+part by covering everything and pinning the rest to a constant.
+
 ### 10.14 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
