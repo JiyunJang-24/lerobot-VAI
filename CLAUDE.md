@@ -1475,7 +1475,41 @@ asking for more renders — and worth checking against the v2 result that high r
 prediction diversity from 30–49% to 82%, since both are about the model having enough distinct
 visual evidence to condition on.
 
-### 10.13 Known limits of this design
+### 10.13 Does held-out do well where the data is densest? Yes — and that is the bad news
+
+`tools/eval_vlm_by_region.py`. The gripper is confined to u 242–637 of 910 (10.12), so the natural
+question is whether the held-out number is being dragged down by thin coverage. Both splits are
+scored in **equal-count bins of |u − mode|**, using bin edges from the held-out split so the two are
+compared on the same position distribution.
+
+The core bin is 30 px wide (u 395–424) and is where the model has had by far the most data:
+
+| model | CORE seen | CORE held-out | gap | all bins seen | all bins held-out | gap |
+|---|---|---|---|---|---|---|
+| cam | 0.176 | 0.168 | +0.009 | 0.166 | 0.157 | +0.009 |
+| cam_s1 | 0.172 | 0.153 | +0.019 | 0.164 | 0.153 | +0.011 |
+| **arm** | 0.164 | **0.158** | **+0.006** | 0.162 | 0.158 | +0.004 |
+| gripper | 0.172 | 0.141 | +0.031 | 0.168 | 0.148 | +0.020 |
+| high | 0.192 | 0.175 | +0.017 | 0.200 | 0.179 | +0.021 |
+| high_arm | 0.195 | 0.178 | +0.017 | 0.200 | 0.171 | +0.029 |
+
+**Morphology is nearly free.** seen − held-out is +0.006 to +0.031, and the cam/cam_s1 seed spread
+is 0.010, so most of those gaps are at or barely above noise. The `arm` split — embodiments whose
+*arm* was never seen — has the **smallest** gap of all at +0.006. Unseen hardware costs almost
+nothing.
+
+**Position is not the limit either.** Core and all-bin numbers are within 0.01–0.03 of each other,
+and 10.12's per-bin sweep was flat across the visited range. So the horizontal concentration is not
+what is holding the score down.
+
+**And that is the problem.** Even in the densest 30 px of the frame, on embodiments it trained on,
+the best model reaches **0.195**. Both splits plateau at the same low level. The bottleneck is
+therefore neither morphology generalisation nor data coverage — it is the task, the label
+vocabulary, or the model. Adding embodiments, cameras or renders will not move it; the earlier
+observation that high resolution took prediction diversity from 30–49% to 82% while the score moved
+only 0.15 → 0.20 points the same way.
+
+### 10.14 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
   no name mapping in the export, so "novel arm + seen gripper" vs "seen arm + novel gripper" cannot
