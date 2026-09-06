@@ -1444,7 +1444,38 @@ and repetitive to force image-conditional answers, and the synthetic-to-real gap
 Both are what the 10.10 redesign targets. Re-run this after the new renders before drawing any
 conclusion about VLMs.
 
-### 10.12 Known limits of this design
+### 10.12 The redesigned export still concentrates the gripper in a narrow band
+
+`outputs/eef_pixel_distribution.png`. Measured over all 448,000 pairs of
+`56combo_8000_local_motion_27cam_kitchen_l8s0`:
+
+| | |
+|---|---|
+| in-frame | 439,040 / 448,000 (98.0%) |
+| **u (horizontal) range** | **242 – 637 of 910** — the left 27% and right 30% are *never* visited |
+| u mean / std | 410 / **55** |
+| v (vertical) range / std | 1 – 512 (full) / 109 |
+| spread of the 27 camera centres | u 43, v 63 |
+| spread *within* one camera | u 35, v 90 |
+
+**Horizontally the gripper lives in a 43%-wide central band, and never leaves it.** Vertically the
+coverage is genuinely full. So the redesign fixed a lot — 27 cameras instead of 4, and within a
+single camera the gripper now moves 35 px horizontally and 90 px vertically instead of sitting in a
+12–22 px cluster — but the horizontal concentration survived, because moving the *camera* around a
+robot that stays centred in frame does not move the robot off-centre.
+
+This is the same class of problem as 10.10 priority 1, one level down: 9.5 measured that a 40 px
+shift moves the tower's features 31% of the way to an unrelated image, and a model whose gripper
+never appears in the outer 57% of the frame has no reason to be robust there. The policy corpus
+frequently has the arm half out of frame.
+
+**The fix is cheap and does not need a re-render**: random-resized-crop / translation augmentation
+at training time, which moves the gripper across the full width for free. Worth trying before
+asking for more renders — and worth checking against the v2 result that high resolution alone took
+prediction diversity from 30–49% to 82%, since both are about the model having enough distinct
+visual evidence to condition on.
+
+### 10.13 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
   no name mapping in the export, so "novel arm + seen gripper" vs "seen arm + novel gripper" cannot
