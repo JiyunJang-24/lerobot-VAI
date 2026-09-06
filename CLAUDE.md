@@ -1509,6 +1509,20 @@ vocabulary, or the model. Adding embodiments, cameras or renders will not move i
 observation that high resolution took prediction diversity from 30–49% to 82% while the score moved
 only 0.15 → 0.20 points the same way.
 
+**What 0.19 means, in interpretable terms** (`high`, 200 samples per split):
+
+| | seen | held-out |
+|---|---|---|
+| exact sentence | **0.000** | **0.000** (0 of 400) |
+| direction recall — right (axis, direction) | 0.600 | 0.567 |
+| direction **and** magnitude | 0.373 | 0.339 |
+| clauses produced vs true | 5.7 vs 4.3 | 5.9 vs 4.3 |
+
+The 60% direction figure is **inflated by over-production**: the model emits ~1.5 more clauses than
+occurred, and naming more components raises recall for free. Jaccard charges for that, which is why
+it reads 0.19 rather than 0.60. Direction is learned far better than magnitude (0.600 vs 0.373),
+which is the clearest pointer to what to change — see `outputs/vlm_motion_v2_report.txt` §6.
+
 ### 10.14 Known limits of this design
 
 * **The three held-out categories the brief asks for cannot be built yet.** `embodiment_index` has
