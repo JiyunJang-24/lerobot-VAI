@@ -202,9 +202,13 @@ def main() -> int:
         centred = F.normalize(feats - feats.mean(0, keepdim=True), dim=-1)
         sim = (centred @ centred.T).numpy()
 
-        # PCA on the centred features
+        # PCA on the centred features. pca_lowrank(q=2) returns only two singular values, so its
+        # s**2 / sum(s**2) is the split BETWEEN those two, not a fraction of total variance -- the
+        # full spectrum is taken separately below, which is what "explained" should mean.
         u, s, _ = torch.pca_lowrank(centred - centred.mean(0, keepdim=True), q=2)
         xy = (u * s).numpy()
+        spectrum = torch.linalg.svdvals((centred - centred.mean(0, keepdim=True)).double()) ** 2
+        spectrum = (spectrum / spectrum.sum()).numpy()
         cmap = plt.get_cmap("turbo")
         for group, marker, size in (("trained", "o", 46), ("held-out", "^", 78)):
             m = groups == group
@@ -227,7 +231,10 @@ def main() -> int:
                 }
         results["towers"][name] = {
             "per_embodiment": per_emb,
-            "pca_explained": [float(x) for x in (s**2 / (s**2).sum()).tolist()],
+            # fraction of the TOTAL variance, not the two-component split
+            "pca_explained": [float(x) for x in spectrum[:2]],
+            "pca_explained_top10": float(spectrum[:10].sum()),
+            "pca_dims_for_90pct": int((spectrum.cumsum() < 0.9).sum()) + 1,
         }
         worst = sorted(per_emb.items(), key=lambda kv: kv[1]["same_pose_cross_embodiment"])[:3]
         log(f"{name}: weakest embodiments {[(k, round(v['same_pose_cross_embodiment'], 3)) for k, v in worst]}")
