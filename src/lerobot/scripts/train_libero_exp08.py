@@ -222,11 +222,18 @@ def main() -> int:
                                     "STATE": NormalizationMode.MEAN_STD,
                                     "ACTION": NormalizationMode.MEAN_STD}
     config.device = str(device)
-    policy = SmolVLAPolicy(config, dataset_stats=dataset._datasets[0].meta.stats).to(device)
+    dataset_stats = dataset._datasets[0].meta.stats
+    policy = SmolVLAPolicy(config, dataset_stats=dataset_stats).to(device)
+    # As in train_dp_embodiment: save_pretrained omits the normalizer pipelines, and without them
+    # a checkpoint silently produces actions on the wrong scale at evaluation time.
+    from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
+
+    preprocessor, postprocessor = make_smolvla_pre_post_processors(config,
+                                                                   dataset_stats=dataset_stats)
     tokenizer = policy.model.vlm_with_expert.processor.tokenizer
     if args.aux == "lap":
         # LAP describes the RAW command in words, so it has to undo the action normalisation.
-        stats = dataset._datasets[0].meta.stats["action"]
+        stats = dataset_stats["action"]
         policy.model.set_action_stats(stats["mean"], stats["std"])
     trainable = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     log(f"setting {args.tag} (aux={args.aux})  trainable {trainable / 1e6:.0f}M")
@@ -305,7 +312,10 @@ def main() -> int:
                     f"eta {(args.steps - step) / rate / 3600:.1f}h")
 
             if step % args.save_freq == 0 or step == args.steps:
-                policy.save_pretrained(out_dir / f"checkpoint_{step:06d}")
+                ckpt = out_dir / f"checkpoint_{step:06d}"
+                policy.save_pretrained(ckpt)
+                preprocessor.save_pretrained(ckpt)
+                postprocessor.save_pretrained(ckpt)
                 (out_dir / "history.json").write_text(json.dumps(
                     {"args": vars(args), "history": history}, indent=2, default=str))
     log(f"done: {step} steps -> {out_dir}")

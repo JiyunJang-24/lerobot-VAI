@@ -120,6 +120,13 @@ def make_policy(args, dataset, device):
 
     stats = dataset._datasets[0].meta.stats
     policy = DiffusionPolicy(config, dataset_stats=stats).to(device)
+    # save_pretrained writes only config.json and model.safetensors. Evaluation also needs the
+    # normalizer/unnormalizer pipelines, and a checkpoint missing them loads fine and then emits
+    # actions on the wrong scale -- a silent failure. Build them here from the SAME stats the
+    # policy was constructed with, and write them beside every checkpoint.
+    from lerobot.policies.diffusion.processor_diffusion import make_diffusion_pre_post_processors
+
+    preprocessor, postprocessor = make_diffusion_pre_post_processors(config, dataset_stats=stats)
     return policy, config
 
 
@@ -462,7 +469,10 @@ def main() -> int:
                     f"eta {(args.steps - step) / rate / 3600:.1f}h")
 
             if step % args.save_freq == 0 or step == args.steps:
-                policy.save_pretrained(out_dir / f"checkpoint_{step:06d}")
+                ckpt = out_dir / f"checkpoint_{step:06d}"
+                policy.save_pretrained(ckpt)
+                preprocessor.save_pretrained(ckpt)
+                postprocessor.save_pretrained(ckpt)
                 (out_dir / "history.json").write_text(
                     json.dumps({"args": vars(args), "history": history}, indent=2, default=str))
 
