@@ -592,6 +592,10 @@ comparability with every result in section 4, so it is left alone deliberately.
 
 ---
 
+> **Start here for an index of every experiment, result and checkpoint path:**
+> `outputs/ALL_EXPERIMENTS.txt`. Sections 9–10 below are the detailed record; that
+> file is the map.
+
 ## 9. Embodiment transfer — can a policy act on robots it has no demonstrations for?
 
 **The research question.** Collecting action demonstrations for every embodiment does not scale.
