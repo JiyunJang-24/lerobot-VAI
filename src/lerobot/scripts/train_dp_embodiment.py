@@ -90,6 +90,7 @@ def make_policy(args, dataset, device):
     action_dim = sample["action"].shape[-1]
     image_shape = tuple(sample[CAMERA].shape)
 
+    dual = args.mode.startswith("dual")
     config = DiffusionConfig(
         n_obs_steps=1,
         horizon=args.chunk,
@@ -97,8 +98,13 @@ def make_policy(args, dataset, device):
         crop_shape=None,
         language_conditioned=True,
         use_siglip_encoder=True,
-        siglip_encoder_path=args.tower if args.mode in ("frozen", "finetune", "online") else "",
-        freeze_vision_encoder=(args.mode == "frozen"),
+        # main tower = the contrastive one in every dual setting; aux = stock (empty path)
+        siglip_encoder_path=(args.tower if args.mode in ("frozen", "finetune", "online") or dual
+                             else ""),
+        freeze_vision_encoder=(args.mode in ("frozen", "dual_freeze_c", "dual_freeze_both")),
+        aux_siglip_encoder_path=("stock" if dual else ""),
+        freeze_aux_vision_encoder=(args.mode in ("dual_freeze_s", "dual_freeze_both")),
+        aux_branch_dropout=args.aux_dropout,
     )
     config.input_features = {
         CAMERA: PolicyFeature(type=FeatureType.VISUAL, shape=image_shape),
@@ -289,7 +295,18 @@ def build_motion_terms(args, policy, device):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", required=True, choices=["online", "frozen", "finetune", "scratch"])
+    ap.add_argument("--mode", required=True, choices=[
+        "online", "frozen", "finetune", "scratch",
+        # dual-tower settings: the contrastive tower and a stock tower side by side. Which half is
+        # frozen is the variable -- a single frozen contrastive tower gave the policy nothing
+        # (CLAUDE.md 9.6), and the question is whether it helps when it is not the only source.
+        "dual_both",        # both trainable
+        "dual_freeze_c",    # contrastive FROZEN, stock trainable
+        "dual_freeze_s",    # stock frozen, contrastive trainable
+        "dual_freeze_both", # both frozen -- the floor for what the pair can contribute
+    ])
+    ap.add_argument("--aux-dropout", type=float, default=0.0,
+                    help="drop the aux branch this often, so the policy cannot silently ignore it")
     ap.add_argument("--tower", default=str(REPO_ROOT / "outputs/siglip_pretrain/all4_n42_all/vision_tower.safetensors"))
     ap.add_argument("--steps", type=int, default=30000)
     ap.add_argument("--batch-size", type=int, default=64)

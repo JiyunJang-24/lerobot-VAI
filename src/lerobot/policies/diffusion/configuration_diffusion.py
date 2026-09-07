@@ -138,6 +138,16 @@ class DiffusionConfig(PreTrainedConfig):
     siglip_encoder_path: str = ""
     use_siglip_encoder: bool = False
     freeze_vision_encoder: bool = False
+    # A SECOND SigLIP tower whose features are concatenated with the first. The point is that a
+    # single frozen contrastive tower gave the policy nothing (CLAUDE.md 9.6): its features sit at
+    # the unrelated-image distance from a policy frame, so there was nothing usable to read. With
+    # two towers the trainable one can supply what the policy needs while the frozen one adds
+    # embodiment-invariant structure on top, so the frozen tower can only help or be ignored.
+    aux_siglip_encoder_path: str = ""
+    freeze_aux_vision_encoder: bool = False
+    # Independently dropping the aux branch forces the policy to keep reading the main one, so it
+    # cannot quietly ignore the addition. Section 9.5's dual-encoder work on SmolVLA needed this.
+    aux_branch_dropout: float = 0.0
 
     # Architecture / modeling.
     # Vision backbone.

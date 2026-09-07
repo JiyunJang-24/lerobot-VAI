@@ -25,6 +25,8 @@ from collections import deque
 from collections.abc import Callable
 
 from contextlib import nullcontext
+from copy import deepcopy
+from pathlib import Path
 
 import einops
 import numpy as np
@@ -208,6 +210,49 @@ class SiglipRgbEncoder(nn.Module):
         return tokens.mean(dim=1)
 
 
+class DualSiglipRgbEncoder(nn.Module):
+    """Two SigLIP towers side by side, their pooled features concatenated.
+
+    Fusion is a plain concat rather than a learned projection: any projection starts by mixing the
+    two towers, and then "the policy ignored the frozen tower" and "the projection destroyed it"
+    are indistinguishable. Concat keeps the two halves separable, so the conditioning dimension
+    doubling is the only change.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        main = deepcopy(config)
+        main.siglip_encoder_path = config.siglip_encoder_path
+        main.freeze_vision_encoder = config.freeze_vision_encoder
+        self.main = SiglipRgbEncoder(main)
+
+        aux = deepcopy(config)
+        # "stock" means the untouched HF tower; SiglipRgbEncoder loads that when the path is empty
+        aux.siglip_encoder_path = ("" if config.aux_siglip_encoder_path == "stock"
+                                   else config.aux_siglip_encoder_path)
+        aux.freeze_vision_encoder = config.freeze_aux_vision_encoder
+        self.aux = SiglipRgbEncoder(aux)
+
+        self.aux_dropout = float(getattr(config, "aux_branch_dropout", 0.0))
+        self.feature_dim = self.main.feature_dim + self.aux.feature_dim
+        print(f"DP: dual tower — main frozen={main.freeze_vision_encoder} "
+              f"({Path(main.siglip_encoder_path).parent.name or 'stock'}), "
+              f"aux frozen={aux.freeze_vision_encoder} "
+              f"({Path(aux.siglip_encoder_path).parent.name or 'stock'}), "
+              f"aux dropout={self.aux_dropout}, feature_dim={self.feature_dim}")
+
+    def forward(self, x: Tensor) -> Tensor:
+        first = self.main(x)
+        second = self.aux(x)
+        if self.training and self.aux_dropout > 0:
+            # Drop the aux branch for whole SAMPLES, not elements: zeroing scattered features
+            # teaches the policy to interpolate over noise, while dropping the branch teaches it
+            # to work without that branch at all -- which is the behaviour being forced.
+            keep = (torch.rand(second.shape[0], 1, device=second.device) >= self.aux_dropout)
+            second = second * keep / max(1e-6, 1.0 - self.aux_dropout)
+        return torch.cat([first, second], dim=-1)
+
+
 class LanguageEncoder(nn.Module):
     """Frozen text embedding of the task string, projected to a small conditioning vector.
 
@@ -257,7 +302,10 @@ class DiffusionModel(nn.Module):
         if self.config.image_features:
             num_images = len(self.config.image_features)
             make_encoder = (
-                (lambda: SiglipRgbEncoder(config)) if getattr(config, "use_siglip_encoder", False)
+                (lambda: DualSiglipRgbEncoder(config))
+                if getattr(config, "aux_siglip_encoder_path", "")
+                else (lambda: SiglipRgbEncoder(config))
+                if getattr(config, "use_siglip_encoder", False)
                 else (lambda: DiffusionRgbEncoder(config))
             )
             if self.config.use_separate_rgb_encoder_per_camera:
