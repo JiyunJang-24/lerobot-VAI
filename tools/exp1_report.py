@@ -53,6 +53,8 @@ def table(root: Path) -> str:
             "method": NAMES[m],
             **{f"R@1 {SHORT[k]}": g.get(k, {}).get("retrieval", {}).get("R@1", float("nan"))
                for k in GROUPS},
+            "R@1 global u/u": g.get("unseen_scene/unseen_emb", {})
+                              .get("retrieval_global", {}).get("R@1", float("nan")),
             "eef cm": eef.get(u, {}).get("trans_cm", float("nan")),
             "eef deg": eef.get(u, {}).get("rot_deg", float("nan")),
             "emb probe": ident.get(u, {}).get("embodiment_acc", float("nan")),
@@ -83,7 +85,8 @@ def neighbours(root: Path, split: Path, group: str, n_query: int, k: int, seed: 
     cfg = Exp1Config(split=split, seed=seed)
     data = Exp1Dataset(cfg, group)
     rng = np.random.default_rng(seed)
-    items = data.enumerate_group(4, np.random.default_rng(seed))
+    items = data.enumerate_group(6, np.random.default_rng(seed),
+                                 embodiments_per_state=6, min_state_sep_m=0.05)
     queries = rng.choice(len(items), n_query, replace=False)
 
     fig, axes = plt.subplots(len(methods) * n_query, k + 1,
@@ -93,9 +96,12 @@ def neighbours(root: Path, split: Path, group: str, n_query: int, k: int, seed: 
         feats = centred(embed(tower, data, items, device))
         sim = feats @ feats.T
         emb_ids = np.array([e for _, _, e in items])
+        scene_ids = np.array([s for s, _, _ in items])
         for qi, q in enumerate(queries):
             row = mi * n_query + qi
-            s = np.where(emb_ids == emb_ids[q], -np.inf, sim[q])
+            # within-scene, matching the headline metric: across scenes the background alone
+            # narrows the gallery and the figure would flatter every method equally
+            s = np.where((emb_ids == emb_ids[q]) | (scene_ids != scene_ids[q]), -np.inf, sim[q])
             top = np.argsort(-s)[:k]
             sq, tq, eq = items[q]
             ax = axes[row, 0]

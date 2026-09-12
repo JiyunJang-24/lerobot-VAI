@@ -100,59 +100,87 @@ def main() -> int:
     embs = args.embodiments.split(",")
     rng = np.random.default_rng(args.seed)
 
-    all_images, all_meta, env_by_shard = [], [], {}
+    # Per-shard, not pooled. LIBERO suites describe different object sets, so
+    # environment_state has a different width AND a different meaning per suite -- 47 dims here,
+    # 110 there. Pooling them into one regression (even truncated to a common prefix) would be
+    # regressing incomparable quantities. Each shard gets its own ridge and its own gallery, and
+    # the reported number is the mean over shards.
+    per_shard = {}
     for label, shard in shards():
         imgs, meta, env = load_rows(label, shard, embs, args.per_shard, rng)
-        env_by_shard[label] = env
-        all_images.append(imgs)
-        all_meta += meta
+        per_shard[label] = (imgs, meta, env)
         log(f"{label}: {len(imgs)} images, env_state {env.shape}")
-    images = np.concatenate(all_images)
-    shard_ids = np.array([m[0] for m in all_meta])
-    row_ids = np.array([m[1] for m in all_meta])
-    emb_ids = np.array([embs.index(m[2]) for m in all_meta])
-    state_ids = np.array([hash((s, r)) % (2**31) for s, r in zip(shard_ids, row_ids, strict=True)])
-
-    # object target: environment_state for that row, z-scored per shard so shards with a larger
-    # world scale do not dominate the regression
-    # LIBERO suites describe different numbers of objects, so environment_state has a different
-    # width per shard. Truncating to the common prefix keeps the target well-defined; the
-    # regression is over whatever object state all suites share.
-    dim = min(v.shape[1] for v in env_by_shard.values())
-    log(f"environment_state widths {[v.shape[1] for v in env_by_shard.values()]} -> using {dim}")
-    target = []
-    for s, r in zip(shard_ids, row_ids, strict=True):
-        env = env_by_shard[s][:, :dim]
-        target.append((env[r] - env.mean(0)) / (env.std(0) + 1e-6))
-    target = np.stack(target)
 
     results = {}
     for ckpt in args.checkpoints:
         f = ckpt / "vision_tower.safetensors"
         tower = load_tower(str(f) if f.exists() else "", device).eval()
-        feats = embed(tower, images, device)
+        r2s, r1s, r5s, n_tot = [], [], [], 0
+        frac_pos, alphas = [], []
+        for label, (imgs, meta, env) in per_shard.items():
+            feats = embed(tower, imgs, device)
+            row_ids = np.array([m[1] for m in meta])
+            emb_ids = np.array([embs.index(m[2]) for m in meta])
+            # Drop object-state dimensions that barely move inside this shard. Their explained
+            # variance denominator is ~0, so a tiny prediction error becomes an R^2 of -10^3 and
+            # the mean over dimensions is then reporting numerical noise, not object information.
+            live = env.std(0) > 1e-3
+            env = env[:, live]
+            target = ((env - env.mean(0)) / env.std(0))[row_ids]
 
-        idx = np.random.default_rng(args.seed).permutation(len(feats))
-        cut = int(0.7 * len(idx))
-        tr, te = idx[:cut], idx[cut:]
-        w = ridge(feats[tr], target[tr], alpha=10.0)
-        pred = apply_ridge(w, feats[te])
-        ss_res = ((pred - target[te]) ** 2).sum(0)
-        ss_tot = ((target[te] - target[te].mean(0)) ** 2).sum(0) + 1e-9
-        r2 = float(np.mean(1 - ss_res / ss_tot))
+            # split by ROW, never by image: the same row rendered with another arm is the same
+            # object configuration, and letting it straddle the split would leak the answer
+            rows = np.unique(row_ids)
+            order = np.random.default_rng(args.seed).permutation(len(rows))
+            cut = max(1, int(0.7 * len(rows)))
+            tr_rows = set(rows[order[:cut]].tolist())
+            tr = np.array([i for i, r in enumerate(row_ids) if r in tr_rows])
+            te = np.array([i for i, r in enumerate(row_ids) if r not in tr_rows])
+            if len(te) == 0 or len(tr) == 0:
+                continue
+            # alpha picked on a split of the TRAINING rows -- 768 features against a few hundred
+            # rows overfits badly at the alpha that suited the selfws probe
+            inner = max(1, int(0.75 * len(tr)))
+            best, best_alpha = -np.inf, 1e3
+            for alpha in (1e1, 1e2, 1e3, 1e4, 1e5):
+                w = ridge(feats[tr[:inner]], target[tr[:inner]], alpha=alpha)
+                pr = apply_ridge(w, feats[tr[inner:]])
+                if len(pr) == 0:
+                    continue
+                score = -float(((pr - target[tr[inner:]]) ** 2).mean())
+                if score > best:
+                    best, best_alpha = score, alpha
+            w = ridge(feats[tr], target[tr], alpha=best_alpha)
+            pred = apply_ridge(w, feats[te])
+            ss_res = ((pred - target[te]) ** 2).sum(0)
+            ss_tot = ((target[te] - target[te].mean(0)) ** 2).sum(0)
+            keep = ss_tot > 1e-6
+            r2_dims = 1 - ss_res[keep] / ss_tot[keep]
+            # median over dimensions, not mean: one ill-conditioned dimension should not decide
+            r2s.append(float(np.median(r2_dims)))
+            frac_pos.append(float((r2_dims > 0).mean()))
+            alphas.append(best_alpha)
 
-        z = centred(feats)
-        sim = np.where(emb_ids[:, None] == emb_ids[None, :], -np.inf, z @ z.T)
-        order = np.argsort(-sim, axis=1)
-        hit = state_ids[order] == state_ids[:, None]
+            z = centred(feats)
+            sim = np.where(emb_ids[:, None] == emb_ids[None, :], -np.inf, z @ z.T)
+            order2 = np.argsort(-sim, axis=1)
+            hit = row_ids[order2] == row_ids[:, None]
+            r1s.append(float(hit[:, 0].mean()))
+            r5s.append(float(hit[:, :5].any(1).mean()))
+            n_tot += len(feats)
+
         results[ckpt.name] = {
-            "object_state_r2": r2,
-            "retrieval_R@1": float(hit[:, 0].mean()),
-            "retrieval_R@5": float(hit[:, :5].any(1).mean()),
-            "n": int(len(feats)),
+            "object_state_r2_median": float(np.mean(r2s)),
+            "object_dims_predicted": float(np.mean(frac_pos)),
+            "object_state_r2_per_shard": r2s,
+            "ridge_alpha_per_shard": alphas,
+            "retrieval_R@1": float(np.mean(r1s)),
+            "retrieval_R@5": float(np.mean(r5s)),
+            "n": n_tot, "n_shards": len(r2s),
         }
-        log(f"{ckpt.name}: object R^2 {r2:+.3f}  LIBERO R@1 {results[ckpt.name]['retrieval_R@1']:.3f}"
-            f"  R@5 {results[ckpt.name]['retrieval_R@5']:.3f}")
+        log(f"{ckpt.name}: object R^2(med) {np.mean(r2s):+.3f}  dims>0 {np.mean(frac_pos):.3f}"
+            f"  LIBERO R@1 {np.mean(r1s):.3f} R@5 {np.mean(r5s):.3f}"
+            f"  ({n_tot} images over {len(r2s)} shards)")
         del tower
         torch.cuda.empty_cache()
 

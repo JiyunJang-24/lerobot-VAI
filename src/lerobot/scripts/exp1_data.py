@@ -232,8 +232,16 @@ class Exp1Dataset:
         return sorted(picked)
 
     def enumerate_group(self, states_per_scene: int, rng: np.random.Generator,
-                        total_states: int = 0, embodiments_per_state: int = 0) -> list[tuple]:
+                        total_states: int = 0, embodiments_per_state: int = 0,
+                        min_state_sep_m: float = 0.0) -> list[tuple]:
         """Flat (scene, t, embodiment) list for evaluation -- deterministic given the seed.
+
+        `min_state_sep_m` exists for the same reason as the other two. The held-out-embodiment
+        groups can only use states VX300SMobile reaches, and those sit much closer together: the
+        frozen baseline's retrieval misses landed 4.1 cm away there against ~20 cm in the seen
+        groups, so it was being asked an easier question about nearly identical frames. Requiring
+        a minimum EEF separation makes "can you tell these states apart" mean the same thing in
+        every group.
 
         `total_states` and `embodiments_per_state` exist because retrieval difficulty scales with
         the gallery, and the four evaluation groups have wildly different natural sizes: 24 train
@@ -252,6 +260,21 @@ class Exp1Dataset:
             for t in self._states[scene]:
                 if ok[t, cols].all():
                     candidates.append((scene, int(t)))
+
+        if min_state_sep_m > 0:
+            thinned = []
+            for scene in self.scenes:
+                pool = [c for c in candidates if c[0] == scene]
+                rng.shuffle(pool)
+                kept: list[tuple] = []
+                kept_xyz: list[np.ndarray] = []
+                for scene_i, t in pool:
+                    xyz = np.mean([self.cache.eef_rel(scene_i, t, e)[:3] for e in chosen_embs], 0)
+                    if all(np.linalg.norm(xyz - k) >= min_state_sep_m for k in kept_xyz):
+                        kept.append((scene_i, t))
+                        kept_xyz.append(xyz)
+                thinned += sorted(kept)
+            candidates = thinned
 
         by_scene: dict[int, list] = {}
         for c in candidates:

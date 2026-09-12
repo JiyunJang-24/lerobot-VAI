@@ -71,12 +71,26 @@ def centred(x: np.ndarray) -> np.ndarray:
     return z / (np.linalg.norm(z, axis=1, keepdims=True) + 1e-8)
 
 
-def retrieval(feats, state_ids, emb_ids, eef_xyz, ks=(1, 5)) -> dict:
-    """Query each row; gallery is every row from a DIFFERENT embodiment."""
+def retrieval(feats, state_ids, emb_ids, eef_xyz, ks=(1, 5), scene_ids=None,
+              within_scene=False) -> dict:
+    """Query each row; gallery is every row from a DIFFERENT embodiment.
+
+    `within_scene` restricts the gallery to the query's own scene, and it is the metric that
+    answers the actual question. Across scenes a tower that merely recognises the kitchen already
+    narrows the gallery to a handful of states and then guesses -- the frozen baseline scored
+    R@1 0.830 that way while its pose discrimination was NEGATIVE (-0.030), which is only
+    possible if it is matching background rather than arm position. Inside one scene the
+    background is constant for every candidate, so the shortcut pays nothing and R@1 measures
+    exactly "same EEF state, different robot".
+    """
     z = centred(feats)
     sim = z @ z.T
     same_emb = emb_ids[:, None] == emb_ids[None, :]
     sim = np.where(same_emb, -np.inf, sim)
+    if within_scene:
+        if scene_ids is None:
+            raise ValueError("within_scene retrieval needs scene_ids")
+        sim = np.where(scene_ids[:, None] == scene_ids[None, :], sim, -np.inf)
     order = np.argsort(-sim, axis=1)
     correct = state_ids[order] == state_ids[:, None]
     res = {f"R@{k}": float(correct[:, :k].any(1).mean()) for k in ks}
@@ -87,6 +101,7 @@ def retrieval(feats, state_ids, emb_ids, eef_xyz, ks=(1, 5)) -> dict:
     miss = ~correct[:, 0]
     res["miss_eef_cm_median"] = float(np.median(dist_cm[miss])) if miss.any() else 0.0
     res["n_query"] = int(len(feats))
+    res["n_gallery_median"] = float(np.median(np.isfinite(sim).sum(1)))
     return res
 
 
@@ -159,6 +174,7 @@ def main() -> int:
     # equalised gallery -- see Exp1Dataset.enumerate_group for why this is not optional
     ap.add_argument("--states-per-group", type=int, default=48)
     ap.add_argument("--embodiments-per-state", type=int, default=6)
+    ap.add_argument("--min-state-sep-m", type=float, default=0.05)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
@@ -180,7 +196,8 @@ def main() -> int:
             data.embodiments = embs
         items = data.enumerate_group(args.states_per_scene, np.random.default_rng(args.seed),
                                      total_states=args.states_per_group,
-                                     embodiments_per_state=args.embodiments_per_state)
+                                     embodiments_per_state=args.embodiments_per_state,
+                                     min_state_sep_m=args.min_state_sep_m)
         if not items:
             log(f"{group}: EMPTY, skipping")
             continue
@@ -198,7 +215,14 @@ def main() -> int:
         results["groups"][group] = {
             "n_items": len(items), "n_scenes": len(set(scene_ids.tolist())),
             "n_embodiments": len(emb_index),
-            "retrieval": retrieval(feats, state_ids, emb_ids, eef[:, :3]),
+            "retrieval": retrieval(feats, state_ids, emb_ids, eef[:, :3],
+                                   scene_ids=scene_ids, within_scene=True),
+            "retrieval_global": retrieval(feats, state_ids, emb_ids, eef[:, :3]),
+            # how far apart the states in this gallery actually are -- without it, a group of
+            # near-duplicate states looks like an easy encoder rather than an easy question
+            "median_state_sep_cm": float(np.median([
+                np.linalg.norm(a - b) for i, a in enumerate(eef[:, :3])
+                for b in eef[i + 1:, :3]]) * 100),
             "scene_control": scene_control(feats, state_ids, scene_ids, emb_ids),
         }
         store[group] = dict(feats=feats, eef=eef, scene=scene_ids, emb=emb_ids, arm=arm_ids)
@@ -209,6 +233,18 @@ def main() -> int:
             f"R@1 {r['R@1']:.3f} R@5 {r['R@5']:.3f} "
             f"miss {r['miss_eef_cm_median']:.1f}cm "
             f"posedisc {results['groups'][group]['scene_control']['pose_discrimination']:+.3f}")
+
+    # Probes see the SAME number of items in every group. With 24 train scenes against 8 held-out
+    # ones the seen groups otherwise carry three times the data, and a probe fit on more rows
+    # scores better for reasons that have nothing to do with the representation.
+    if store:
+        cap = min(len(v["feats"]) for v in store.values())
+        for group, s_ in store.items():
+            if len(s_["feats"]) > cap:
+                idx = np.sort(np.random.default_rng(args.seed).choice(len(s_["feats"]), cap,
+                                                                      replace=False))
+                store[group] = {k: v[idx] for k, v in s_.items()}
+        log(f"probes capped at {cap} items per group")
 
     # ---- probes, all fit on seen/seen and applied everywhere -------------------------------
     base = store.get("seen_scene/seen_emb")
