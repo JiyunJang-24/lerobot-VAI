@@ -125,6 +125,7 @@ class Exp1Dataset:
         self.group = group
         self._usable: dict[int, dict[str, np.ndarray]] = {}
         self._states: dict[int, np.ndarray] = {}
+        self._ok: dict[int, np.ndarray] = {}   # (T, E) bool, so nothing else touches the images
         self._build_index(rng)
 
     def _build_index(self, rng: np.random.Generator) -> None:
@@ -138,6 +139,7 @@ class Exp1Dataset:
             with np.load(Path(self.split["cache"]) / f"ep{scene:03d}.npz") as z:
                 reach, perr = z["reachable"], z["pos_err"]
             ok = (reach > 0.5) & (perr < self.cfg.max_pos_err_m)
+            self._ok[scene] = ok
             idx = {e: np.flatnonzero(ok[:, self.cache.index[e]]) for e in self.embodiments}
             # a state is only usable if at least two embodiments render it -- one render has no pair
             counts = sum(ok[:, self.cache.index[e]].astype(int) for e in self.embodiments)
@@ -194,18 +196,83 @@ class Exp1Dataset:
             "scene": scene,
         }
 
-    def enumerate_group(self, states_per_scene: int, rng: np.random.Generator) -> list[tuple]:
-        """Flat (scene, t, embodiment) list for evaluation -- deterministic given the seed."""
-        out = []
+    def group_embodiments(self, k: int) -> list[str]:
+        """A FIXED set of k embodiments for a whole evaluation group.
+
+        Picking k per state instead would leave the seen groups spanning 20 distinct embodiments
+        and the held-out groups only 10, which silently turns the identity probe into a 20-way
+        problem in one group and a 10-way one in another. Ranked by how many states the
+        embodiment can actually reach, because VX300SMobile reaches only ~30% of them and
+        demanding it everywhere would throw away most of the held-out data.
+        """
+        # Scored over EVERY scene in the split, not just this group's. Scoring per group made
+        # the seen-scene and unseen-scene groups pick different embodiment subsets, so comparing
+        # them would have changed two things at once.
+        all_scenes = sorted(set(self.split["train_scenes"]) | set(self.split["heldout_scenes"]))
+        score = dict.fromkeys(self.embodiments, 0)
+        for scene in all_scenes:
+            with np.load(Path(self.split["cache"]) / f"ep{scene:03d}.npz") as z:
+                ok = (z["reachable"] > 0.5) & (z["pos_err"] < self.cfg.max_pos_err_m)
+            for e in self.embodiments:
+                score[e] += int(ok[:, self.cache.index[e]].sum())
+
+        # Every arm in the group gets a slot before any arm gets a second one. Pure ranking by
+        # reachability picked UR5e and Sawyer only, which would have left IIWA and Panda out of
+        # the seen-embodiment groups entirely and quietly turned the arm probe into a 2-way task.
+        by_arm: dict[str, list[str]] = {}
+        for e in self.embodiments:
+            by_arm.setdefault(e.split("_")[0], []).append(e)
+        for arm in by_arm:
+            by_arm[arm].sort(key=lambda e: -score[e])
+        picked: list[str] = []
+        while len(picked) < k and any(by_arm.values()):
+            for arm in sorted(by_arm, key=lambda a: -score[by_arm[a][0]] if by_arm[a] else 0):
+                if by_arm[arm] and len(picked) < k:
+                    picked.append(by_arm[arm].pop(0))
+        return sorted(picked)
+
+    def enumerate_group(self, states_per_scene: int, rng: np.random.Generator,
+                        total_states: int = 0, embodiments_per_state: int = 0) -> list[tuple]:
+        """Flat (scene, t, embodiment) list for evaluation -- deterministic given the seed.
+
+        `total_states` and `embodiments_per_state` exist because retrieval difficulty scales with
+        the gallery, and the four evaluation groups have wildly different natural sizes: 24 train
+        scenes against 8 held-out ones, 20 train embodiments against 10 held-out. Left at their
+        natural sizes the held-out groups look EASIER -- the frozen baseline scored 0.733 on
+        unseen/unseen against 0.618 on seen/seen purely because its gallery held a third as many
+        states. Fixing both counts makes every group an identically sized problem.
+        """
+        chosen_embs = (self.group_embodiments(embodiments_per_state)
+                       if embodiments_per_state else list(self.embodiments))
+
+        cols = [self.cache.index[e] for e in chosen_embs]
+        candidates = []
         for scene in self.scenes:
-            states = self._states[scene]
-            if states_per_scene and len(states) > states_per_scene:
-                states = np.sort(rng.choice(states, states_per_scene, replace=False))
-            blob = self.cache(scene)
-            for t in states:
-                for e in self.embodiments:
-                    j = self.cache.index[e]
-                    if (blob["reachable"][t, j] > 0.5
-                            and blob["pos_err"][t, j] < self.cfg.max_pos_err_m):
-                        out.append((scene, int(t), e))
-        return out
+            ok = self._ok[scene]
+            for t in self._states[scene]:
+                if ok[t, cols].all():
+                    candidates.append((scene, int(t)))
+
+        by_scene: dict[int, list] = {}
+        for c in candidates:
+            by_scene.setdefault(c[0], []).append(c)
+
+        if total_states and len(candidates) > total_states:
+            per = max(1, total_states // max(1, len(by_scene)))
+            picked = []
+            for scene in sorted(by_scene):
+                pool = by_scene[scene]
+                idx = sorted(rng.choice(len(pool), min(per, len(pool)), replace=False))
+                picked += [pool[i] for i in idx]
+            if len(picked) > total_states:
+                idx = sorted(rng.choice(len(picked), total_states, replace=False))
+                picked = [picked[i] for i in idx]
+            candidates = picked
+        elif states_per_scene:
+            candidates = []
+            for scene in sorted(by_scene):
+                pool = by_scene[scene]
+                idx = sorted(rng.choice(len(pool), min(states_per_scene, len(pool)), replace=False))
+                candidates += [pool[i] for i in idx]
+
+        return [(scene, t, e) for scene, t in candidates for e in chosen_embs]

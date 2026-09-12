@@ -154,8 +154,11 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checkpoint", type=Path, required=True)
     ap.add_argument("--split", type=Path, default=Path("outputs/exp1/split.json"))
-    ap.add_argument("--states-per-scene", type=int, default=6)
-    ap.add_argument("--max-embodiments", type=int, default=8)
+    ap.add_argument("--states-per-scene", type=int, default=0)
+    ap.add_argument("--max-embodiments", type=int, default=0)
+    # equalised gallery -- see Exp1Dataset.enumerate_group for why this is not optional
+    ap.add_argument("--states-per-group", type=int, default=48)
+    ap.add_argument("--embodiments-per-state", type=int, default=6)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
@@ -175,7 +178,9 @@ def main() -> int:
         if args.max_embodiments and len(embs) > args.max_embodiments:
             embs = sorted(rng.choice(embs, args.max_embodiments, replace=False).tolist())
             data.embodiments = embs
-        items = data.enumerate_group(args.states_per_scene, np.random.default_rng(args.seed))
+        items = data.enumerate_group(args.states_per_scene, np.random.default_rng(args.seed),
+                                     total_states=args.states_per_group,
+                                     embodiments_per_state=args.embodiments_per_state)
         if not items:
             log(f"{group}: EMPTY, skipping")
             continue
@@ -198,7 +203,10 @@ def main() -> int:
         }
         store[group] = dict(feats=feats, eef=eef, scene=scene_ids, emb=emb_ids, arm=arm_ids)
         r = results["groups"][group]["retrieval"]
-        log(f"{group:26s} n={len(items):5d} R@1 {r['R@1']:.3f} R@5 {r['R@5']:.3f} "
+        n_states = len(set(state_ids.tolist()))
+        results["groups"][group]["n_states"] = n_states
+        log(f"{group:26s} n={len(items):5d} states={n_states:3d} "
+            f"R@1 {r['R@1']:.3f} R@5 {r['R@5']:.3f} "
             f"miss {r['miss_eef_cm_median']:.1f}cm "
             f"posedisc {results['groups'][group]['scene_control']['pose_discrimination']:+.3f}")
 
