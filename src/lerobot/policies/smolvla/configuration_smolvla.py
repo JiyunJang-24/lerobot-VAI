@@ -123,6 +123,11 @@ class SmolVLAConfig(PreTrainedConfig):
     # a fraction of steps where the fused representation equals the main tower's contribution
     # exactly, so the action loss cannot route around it.
     fusion_aux_dropout: float = 0.0
+    # Give each image its OWN SigLIP tower instead of running every image through the shared one.
+    # Set it to the number of image inputs; 1 (the default) is the stock shared-encoder behaviour.
+    # Used by the robot/scene segmentation split, where the two inputs are disjoint crops of the
+    # same frame and there is a real question whether one encoder should have to serve both.
+    num_image_encoders: int = 1
 
     # Path to a SigLIP tower state dict from
     # `src/lerobot/scripts/pretrain_siglip_visual_robust.py`, loaded over the pretrained tower at

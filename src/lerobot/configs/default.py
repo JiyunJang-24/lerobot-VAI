@@ -62,6 +62,11 @@ class DatasetConfig:
     # different frames apart. "alignment": positives only, 1 - mean cosine similarity within each
     # frame's view group, with no negative term at all.
     visual_robust_front_objective: str = "contrastive"
+    # Which of the policy's image inputs the visual-robust contrastive loss is allowed to shape.
+    # "" keeps the historical behaviour (always the first/only vision tower). Set it to a key name
+    # and the loss is routed to THAT key's tower, resolved by name and asserted -- so with
+    # per-image encoders the other image's tower receives no contrastive gradient at all.
+    visual_robust_target_image_key: str = ""
     visual_robust_head_mode: str = "none"
     # Only consulted when head_mode="adapter_mlp" (head_mode="none" contrasts the backbone output
     # directly, so freezing it there would leave the loss nothing to train). True keeps the

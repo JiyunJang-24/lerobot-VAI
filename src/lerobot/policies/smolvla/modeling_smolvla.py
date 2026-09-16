@@ -704,6 +704,7 @@ class VLAFlowMatching(nn.Module):
             aux_vision_encoder_path=self.config.aux_vision_encoder_path,
             freeze_aux_vision_encoder=self.config.freeze_aux_vision_encoder,
             fusion_aux_dropout=self.config.fusion_aux_dropout,
+            num_image_encoders=self.config.num_image_encoders,
         )
         self.postfix_tokenizer = None
         if self.config.knowledge_insulation:
@@ -836,7 +837,7 @@ class VLAFlowMatching(nn.Module):
                 embs.append(image_start_token)
                 pad_masks.append(image_start_mask)
 
-            img_emb = self.vlm_with_expert.embed_image(img)
+            img_emb = self.vlm_with_expert.embed_image(img, encoder_idx=_img_idx)
             img_emb = img_emb
 
             # Normalize image embeddings

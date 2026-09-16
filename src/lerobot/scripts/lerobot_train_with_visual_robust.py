@@ -1220,6 +1220,7 @@ def _encode_flat_visual_robust(
     head: torch.nn.Module | None = None,
     freeze_backbone: bool = True,
     return_tokens: bool = False,
+    encoder_idx: int = 0,
 ) -> torch.Tensor:
     """Run [N, C, H, W] auxiliary images through the encoder stack once. See
     _encode_visual_robust_features for what each head_mode does.
@@ -1228,7 +1229,10 @@ def _encode_flat_visual_robust(
     EEF-state head: regressing a fingertip POSITION from a mean over 1024 tokens throws away
     most of the where-information the task is asking for."""
     vlm = unwrapped_policy.model.vlm_with_expert.get_vlm_model()
-    vision_model = vlm.vision_model
+    # Route through the tower that owns the TARGET image input. With per-image encoders this is
+    # what keeps the contrastive gradient off the other image's tower; with a single shared tower
+    # idx 0 is the only choice and this is the historical behaviour.
+    vision_model = unwrapped_policy.model.vlm_with_expert.vision_tower(encoder_idx)
     use_head = head_mode == "adapter_mlp"
     # head_mode="none" contrasts the backbone output directly; freezing it there would leave the
     # loss with nothing to train, so the flag only applies when there is a head downstream.
@@ -1348,6 +1352,7 @@ def compute_visual_robust_contrastive_loss_multi(
     freeze_backbone: bool = True,
     objective: str = "contrastive",
     include_views=None,
+    encoder_idx: int = 0,
 ) -> tuple[torch.Tensor | None, dict[str, float]]:
     """Visual-robust loss over several view groups (one per prefix), averaged.
 
@@ -1383,6 +1388,7 @@ def compute_visual_robust_contrastive_loss_multi(
         head_mode,
         head,
         freeze_backbone,
+        encoder_idx=encoder_idx,
     )
 
     losses, metrics = [], {}
@@ -1598,6 +1604,7 @@ def update_policy(
     visual_robust_wrist_width_right_index: int = 1,
     visual_robust_encoder_chunk_size: int = 32,
     visual_robust_include_views=None,
+    visual_robust_encoder_idx: int = 0,
     visual_robust_vqa_weight: float = 0.0,
     visual_robust_vqa_tokenizer=None,
     visual_robust_vqa_references=None,
@@ -1747,6 +1754,7 @@ def update_policy(
                 freeze_backbone=visual_robust_freeze_backbone,
                 objective=visual_robust_front_objective,
                 include_views=visual_robust_include_views,
+                encoder_idx=visual_robust_encoder_idx,
             )
             output_dict.update(contrastive_metrics)
             if contrastive_loss is not None:
@@ -2371,6 +2379,32 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     visual_robust_temperature = cfg.dataset.visual_robust_temperature
     visual_robust_max_views = cfg.dataset.visual_robust_max_views
     visual_robust_random_views = cfg.dataset.visual_robust_random_views
+    # Which vision tower the contrastive loss is allowed to shape. Resolved from the image key by
+    # NAME against the policy's own image_features, and asserted -- deriving it from dict order
+    # would be the same silent-assumption failure as the wrist flag, where a key that did not match
+    # the filter trained anyway and nothing said so.
+    visual_robust_encoder_idx = 0
+    _vr_target_key = getattr(cfg.dataset, "visual_robust_target_image_key", "") or ""
+    if _vr_target_key:
+        _img_keys = list(cfg.policy.image_features)
+        if _vr_target_key not in _img_keys:
+            raise ValueError(
+                f"dataset.visual_robust_target_image_key={_vr_target_key!r} is not one of the "
+                f"policy's image inputs {_img_keys}"
+            )
+        visual_robust_encoder_idx = _img_keys.index(_vr_target_key)
+        _n_enc = getattr(cfg.policy, "num_image_encoders", 1)
+        if visual_robust_encoder_idx > 0 and _n_enc <= visual_robust_encoder_idx:
+            raise ValueError(
+                f"visual_robust_target_image_key={_vr_target_key!r} is image "
+                f"{visual_robust_encoder_idx} but policy.num_image_encoders={_n_enc}: that image "
+                "shares a tower with image 0, so the loss cannot be confined to it."
+            )
+        logging.info(
+            f"Visual-robust contrastive pinned to {_vr_target_key} (image index "
+            f"{visual_robust_encoder_idx}, tower {visual_robust_encoder_idx} of {_n_enc})"
+        )
+
     visual_robust_head_mode = cfg.dataset.visual_robust_head_mode
     visual_robust_freeze_backbone = cfg.dataset.visual_robust_freeze_backbone
     visual_robust_front_objective = cfg.dataset.visual_robust_front_objective
@@ -2774,6 +2808,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             visual_robust_wrist_width_right_index=visual_robust_wrist_width_right_index,
             visual_robust_encoder_chunk_size=visual_robust_encoder_chunk_size,
             visual_robust_include_views=visual_robust_include_views,
+            visual_robust_encoder_idx=visual_robust_encoder_idx,
             visual_robust_vqa_weight=visual_robust_vqa_weight,
             visual_robust_vqa_tokenizer=visual_robust_vqa_tokenizer,
             visual_robust_vqa_references=visual_robust_vqa_references,

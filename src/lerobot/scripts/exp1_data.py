@@ -36,6 +36,7 @@ class Exp1Config:
     embodiments_per_state: int = 6
     max_train_scenes: int = 0        # 0 = all scenes in the split
     max_train_embodiments: int = 0   # 0 = all embodiments in the split
+    max_train_arms: int = 0          # 0 = all arms; restricts TRAINING only, eval groups unchanged
     states_per_scene: int = 0        # 0 = every cached state
     total_state_budget: int = 0      # 0 = unbounded; caps scenes x states for fixed-budget runs
     max_pos_err_m: float = 0.01
@@ -118,6 +119,14 @@ class Exp1Dataset:
         rng = np.random.default_rng(cfg.seed)
         if cfg.max_train_scenes and group == "train":
             scenes = sorted(rng.choice(scenes, min(cfg.max_train_scenes, len(scenes)), replace=False).tolist())
+        if cfg.max_train_arms and group == "train":
+            # Restrict by ARM, not by embodiment count. Dropping random embodiments would still
+            # leave every arm represented, which is not the diversity axis that matters -- the
+            # split holds arms out whole, so the training-side axis has to be arms too.
+            arms = sorted({e.split("_")[0] for e in embs})
+            keep = set(sorted(rng.choice(arms, min(cfg.max_train_arms, len(arms)),
+                                         replace=False).tolist()))
+            embs = [e for e in embs if e.split("_")[0] in keep]
         if cfg.max_train_embodiments and group == "train":
             embs = sorted(rng.choice(embs, min(cfg.max_train_embodiments, len(embs)), replace=False).tolist())
 

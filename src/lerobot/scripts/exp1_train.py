@@ -160,6 +160,7 @@ def main() -> int:
     # scaling axes, all optional
     ap.add_argument("--max-train-scenes", type=int, default=0)
     ap.add_argument("--max-train-embodiments", type=int, default=0)
+    ap.add_argument("--max-train-arms", type=int, default=0)
     ap.add_argument("--states-per-scene", type=int, default=0)
     ap.add_argument("--total-state-budget", type=int, default=0)
     args = ap.parse_args()
@@ -174,6 +175,7 @@ def main() -> int:
         embodiments_per_state=args.embodiments_per_state,
         max_train_scenes=args.max_train_scenes,
         max_train_embodiments=args.max_train_embodiments,
+        max_train_arms=args.max_train_arms,
         states_per_scene=args.states_per_scene,
         total_state_budget=args.total_state_budget, seed=args.seed)
     data = Exp1Dataset(cfg, "train")

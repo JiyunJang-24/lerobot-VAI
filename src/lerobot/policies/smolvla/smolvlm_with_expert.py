@@ -79,6 +79,7 @@ class SmolVLMWithExpertModel(nn.Module):
         aux_vision_encoder_path: str = "",
         freeze_aux_vision_encoder: bool = True,
         fusion_aux_dropout: float = 0.0,
+        num_image_encoders: int = 1,
     ):
         super().__init__()
         if load_vlm_weights:
@@ -137,6 +138,17 @@ class SmolVLMWithExpertModel(nn.Module):
 
         if vision_encoder_path:
             self.load_vision_encoder(vision_encoder_path)
+
+        # One tower per image input. Index 0 stays the VLM's own vision_model so that a
+        # num_image_encoders=1 run is bit-for-bit the stock model; the extras are deep copies of it,
+        # i.e. they start from the same pretrained weights and diverge only through training.
+        self.num_image_encoders = max(1, int(num_image_encoders))
+        self.extra_vision_models = nn.ModuleList()
+        for _ in range(self.num_image_encoders - 1):
+            self.extra_vision_models.append(copy.deepcopy(self.get_vlm_model().vision_model))
+        if self.num_image_encoders > 1:
+            print(f"Per-image vision encoders: {self.num_image_encoders} "
+                  f"({len(self.extra_vision_models)} extra towers, connector shared)")
 
         self.aux_vision_model = None
         self.vision_fusion = None
@@ -213,9 +225,10 @@ class SmolVLMWithExpertModel(nn.Module):
 
     def set_requires_grad(self):
         if self.freeze_vision_encoder:
-            self.get_vlm_model().vision_model.eval()
-            for params in self.get_vlm_model().vision_model.parameters():
-                params.requires_grad = False
+            for tower in [self.get_vlm_model().vision_model, *self.extra_vision_models]:
+                tower.eval()
+                for params in tower.parameters():
+                    params.requires_grad = False
         if self.train_expert_only:
             self.vlm.eval()
             for params in self.vlm.parameters():
@@ -263,7 +276,21 @@ class SmolVLMWithExpertModel(nn.Module):
         if self.train_expert_only:
             self.vlm.eval()
 
-    def embed_image(self, image: torch.Tensor):
+    def vision_tower(self, idx: int = 0):
+        """The SigLIP tower that image `idx` is routed through.
+
+        Single place that owns the mapping, so the policy's forward pass and the auxiliary
+        contrastive loss cannot disagree about which tower an image belongs to.
+        """
+        if idx > 0 and self.num_image_encoders > 1:
+            if idx - 1 >= len(self.extra_vision_models):
+                raise IndexError(
+                    f"image {idx} has no encoder: num_image_encoders={self.num_image_encoders}"
+                )
+            return self.extra_vision_models[idx - 1]
+        return self.get_vlm_model().vision_model
+
+    def embed_image(self, image: torch.Tensor, encoder_idx: int = 0):
         patch_attention_mask = None
         # Get sequence from the vision encoder
         if self.new_visual_cue_encoder:
@@ -273,14 +300,14 @@ class SmolVLMWithExpertModel(nn.Module):
             rgb = image
             visual_cue = None
 
-        image_hidden_states = (
-            self.get_vlm_model()
-            .vision_model(
-                pixel_values=rgb.to(dtype=self.get_vlm_model().vision_model.dtype),
-                patch_attention_mask=patch_attention_mask,
-            )
-            .last_hidden_state
-        )
+        # num_image_encoders == 1 is the SHARED case: every image goes through the one tower,
+        # which is the stock behaviour and the point of that arm of the experiment. Only a run that
+        # asked for per-image towers can be short of one.
+        tower = self.vision_tower(encoder_idx)
+        image_hidden_states = tower(
+            pixel_values=rgb.to(dtype=tower.dtype),
+            patch_attention_mask=patch_attention_mask,
+        ).last_hidden_state
         if self.aux_vision_model is not None:
             # Branch dropout: zero the AUX contribution (never the main one) on a training-only
             # fraction of steps, so the fused feature sometimes equals the main tower's output
