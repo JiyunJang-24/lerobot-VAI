@@ -1,0 +1,193 @@
+================================================================================
+eef_pairs — WHAT IS WRONG WITH THE CURRENT DATASET, AND WHAT TO RENDER INSTEAD
+every claim below is a measurement from this repo, with the number that produced it
+written 2026-09-04
+================================================================================
+
+The synthetic data does its intended job well: 56 embodiments posed identically lets
+a model learn Cartesian motion that transfers to unseen morphologies (0.67 cm on
+held-out embodiments against a 4.66 cm baseline). The problems below are all about
+what happens when that knowledge has to leave the synthetic domain.
+
+--------------------------------------------------------------------------------
+PRIORITY 1 — ONLY 4 FIXED CAMERA POSES.  This is the dominant failure.
+--------------------------------------------------------------------------------
+WHAT IS MEASURED
+  Where the gripper lands in the image, per view, over the whole 144-pose subset:
+
+      view 0   mean pixel (108,  64)    std (12.5, 36.0)
+      view 1   mean pixel ( 50, 127)    std (14.8, 24.3)
+      view 2   mean pixel ( 62, 152)    std (15.0, 18.8)
+      view 3   mean pixel (245,  61)    std (22.5, 28.8)
+
+  Four tight clusters ~200 px apart, each only 12-22 px wide horizontally. The model
+  never sees the gripper anywhere else.
+
+  Consequences, all measured:
+    * the EEF-pixel head reaches 3-5 px on embodiments it has NEVER seen, but
+      collapses to near chance on the policy corpus -- a fifth camera geometry
+    * perturbing a synthetic frame and measuring how far its FEATURE moves, as a
+      fraction of the distance a real pose change produces:
+          different background ............  1%
+          furniture recolour ..............  2%
+          DIFFERENT ROBOT .................  4%
+          shift 40 px (size unchanged) .... 31%
+          zoom out to 0.75 ................ 41%
+          a policy-corpus frame ........... 102%  (fully decorrelated)
+      The tower treats a 40-pixel camera shift as a third of the way to an unrelated
+      image while treating a different robot as 4%. The invariance that was trained
+      is to embodiment and appearance; it is emphatically NOT to camera geometry.
+    * this is also the best explanation for the one failure in the real-robot
+      transfer: pre-training improves DIRECTION on a novel arm (0.712 -> 0.756,
+      seed ranges separated) but not MAGNITUDE (2.82 -> 2.90, overlapping). How far
+      something moved in pixels depends on how big the arm looks and how it is
+      framed, which is exactly what a new morphology changes.
+
+  Also: background_index is NOT independent of the camera. bg mod 4 == view exactly,
+  so "12 backgrounds" is really 4 camera views x 3 backdrop colours. Backdrop
+  diversity is 3.
+
+  And the four views are not interchangeable. Over 600 pose pairs on a fixed robot,
+  the SAME 3-D displacement produces pixel displacements whose magnitude varies by a
+  median factor of 1.6 across views, individual cases up to 7x -- a 0.20 m motion
+  moves the gripper 6 px in view 0 and 43 px in view 3. With a world-frame label the
+  model must identify the view before it can use the image, and four is small enough
+  to memorise.
+
+WHAT TO RENDER INSTEAD -- three options, and the choice depends on the LABEL FRAME
+  Within a pair the camera must ALWAYS be identical; otherwise camera motion and
+  robot motion are mixed and the label is not recoverable. Between samples:
+
+  A. Match the deployment camera exactly (RoboCasa robot0_agentview_right, which is
+     base-mounted). One camera everywhere. Best when the target setup is known and
+     singular, which here it is: it removes the domain gap instead of asking the
+     model to bridge it. Note today's 4 arbitrary views match nothing, which is the
+     worst of both worlds.
+  B. Vary the camera continuously AND express the delta in the CAMERA frame. A new
+     camera is then just a new frame and nothing is memorised per view. Because the
+     target camera is base-mounted, a camera-frame label is also close to the
+     base-frame action the policy needs. Best when the data must serve setups not yet
+     chosen.
+  C. Vary the camera but keep world-frame labels -- do NOT do this. It is the current
+     design with more views and it makes the task ambiguous.
+
+  Either way, decouple background from camera, vary distance/FOV so apparent SIZE
+  varies (apparent size is what magnitude transfer fails on), and
+  Record the camera extrinsics and intrinsics as columns. The current export has
+  none, which is why the gripper pixel could not be recomputed for the policy corpus
+  and had to be re-exported separately.
+
+  This one change is worth more than more embodiments or more backgrounds -- those
+  axes are already flat at 1-4%.
+
+--------------------------------------------------------------------------------
+PRIORITY 2 — POSES COVER THE WORKSPACE INSTEAD OF FORMING TRAJECTORY SEGMENTS
+--------------------------------------------------------------------------------
+WHAT IS MEASURED
+  144 poses, pairwise distance p10 0.078 m / median 0.181 / p90 0.342.
+  Restricting to pairs within 0.15 m still gives a MEAN ROTATION OF 48 degrees.
+  A real trajectory over the matching horizon (25 frames, 0.09 m) rotates ~6.5.
+
+  Fitting language thresholds to each corpus independently:
+      translation  synthetic 0.028 / 0.073 / 0.110 m   real 0.026 / 0.072 / 0.107 m
+                   -> agree to 7%.  "move forward moderately" means the same thing.
+      rotation     synthetic 9.7 / 29.2 / 63.8 deg     real 1.0 / 3.9 / 8.8 deg
+                   -> 7x apart. "roll left moderately" means 29 deg or 3.9 deg
+                      depending on which corpus you are in.
+
+  So translation transfers by construction and rotation cannot.
+
+WHAT TO RENDER INSTEAD
+  What the original brief actually described: sample a reachable s_t, then sample a
+  LOCAL delta_eef with the translation AND rotation magnitudes drawn to match real
+  trajectory segments, compute s_t+h, render both. Pairs, not a pose grid.
+  Target roughly |d| ~ 0.10 m with rotation ~5-10 deg, and include a tail of larger
+  motions rather than centring on them.
+
+--------------------------------------------------------------------------------
+PRIORITY 3 — ROTATION IS BELOW THE VISUAL RESOLUTION
+--------------------------------------------------------------------------------
+WHAT IS MEASURED
+  Frames are 180x320. The gripper spans roughly 20 px.
+  A 5-degree rotation moves the gripper's extremities by 0.87 px.
+  SigLIP's patch is 16 px at 512x512, i.e. 10 px in the original frame.
+  So a realistic rotation changes the image by about one ELEVENTH of one patch.
+
+  It shows up exactly as predicted. Relative error (prediction error / actual motion):
+      synthetic, ~60 deg rotations ....  24%   learned
+      real,      ~6.5 deg rotations ...  95%   not learned, in 6 of 6 runs, and worse
+                                               than predicting no rotation at all
+  And half the real rotation is not even signal: over 25 frames the gripper travels
+  12.3 degrees of path but ends 6.5 degrees from where it started (ratio 0.53).
+  Translation's equivalent ratio is 0.88.
+
+WHAT TO RENDER INSTEAD
+  Any one of: higher resolution (512x512 native rather than upsampled 180x320);
+  a wrist camera, where the gripper fills the frame; or a longer horizon so rotation
+  accumulates past the noise. Without one of these, rotation supervision is wasted
+  compute no matter how the data is sampled.
+
+--------------------------------------------------------------------------------
+PRIORITY 4 — THE GRIPPER IS BINARY, AND ENCODED AS A SUBSET
+--------------------------------------------------------------------------------
+WHAT IS MEASURED / OBSERVED
+  Gripper state is not a column. It is which of `_closed` / `_open` a frame lives in,
+  so it has exactly 2 values and a pair can only express "opened", "closed" or "no
+  change". Real grippers are continuous, and the policy corpus stores them as such.
+  It also forces the loader to pair ACROSS subsets to get any gripper supervision at
+  all, which is easy to get wrong: pairing across `_furniture` too repaints the
+  kitchen mid-motion.
+
+WHAT TO RENDER INSTEAD
+  A continuous `gripper` column in observation.state, sampled over its range, in ONE
+  subset. Keep `_furniture` as a separate axis if it is useful, but it should be a
+  COLUMN as well, not a directory -- the same is true of the colour variant.
+
+--------------------------------------------------------------------------------
+PRIORITY 5 — THE SCENE IS EMPTY; THE POLICY CORPUS IS A CLUTTERED KITCHEN
+--------------------------------------------------------------------------------
+WHAT IS MEASURED
+  A policy-corpus frame sits 102% of the way from a synthetic frame to a completely
+  unrelated image -- i.e. fully decorrelated. Whatever the tower encodes about
+  synthetic renders carries nothing to real frames.
+  The renders are a large centred robot on a checkerboard floor; the policy frames
+  are a kitchen with a sink, objects, occlusion, and the arm often half out of frame.
+
+WHAT TO RENDER INSTEAD
+  Render the arms INTO scenes resembling the target domain -- the RoboCasa kitchens
+  the policy data uses -- with objects on the counter and the arm sometimes partly
+  out of frame. This is a bigger change than the others and is the natural companion
+  to priority 1: geometry and scene content are the two axes on which the synthetic
+  and real domains actually differ.
+
+--------------------------------------------------------------------------------
+PRIORITY 6 — embodiment_index HAS NO NAME MAPPING (cheap to fix, blocks analysis)
+--------------------------------------------------------------------------------
+  `observation.embodiment_index` is an integer with no key anywhere in the export --
+  not in meta/, not in the dataset card. So held-out splits are random and
+  "unseen ARM" cannot be separated from "unseen GRIPPER".
+  The experiment brief asked for exactly those three categories, and they could only
+  be built on visual_robust_new_barx_ur5e, which does name its six embodiments.
+  Ship a meta/embodiments.json mapping index -> {arm, gripper}. This costs nothing
+  and immediately sharpens every held-out result in the project.
+
+--------------------------------------------------------------------------------
+WHAT IS ALREADY RIGHT — KEEP IT
+--------------------------------------------------------------------------------
+  * every embodiment posed at IDENTICAL EEF states. This is what makes embodiment
+    identity carry zero information about the motion label, so the shortcut is
+    impossible by construction rather than by sampling luck. It is the single best
+    property of this dataset -- do not lose it when moving to sampled pairs. Sample
+    the pose pairs ONCE and render all embodiments at them.
+  * the colour variants. Verified consistent across all four subsets, and they are
+    genuine nuisance-appearance augmentation on the robot itself.
+  * eef_pixel and eef_in_frame. Keep them, and add the camera parameters that would
+    let them be recomputed.
+
+--------------------------------------------------------------------------------
+IF ONLY ONE THING CHANGES
+--------------------------------------------------------------------------------
+  Randomise the camera pose (priority 1). Every measurement points at it, it is the
+  cheapest of the structural fixes, and the axes people would intuitively add first
+  -- more embodiments, more backgrounds -- are already measured flat at 1-4%.
+================================================================================

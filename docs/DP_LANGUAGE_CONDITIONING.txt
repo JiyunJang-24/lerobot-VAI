@@ -1,0 +1,167 @@
+================================================================================
+LANGUAGE-CONDITIONED DIFFUSION POLICY — WHERE THE CODE IS AND HOW LANGUAGE ATTACHES
+repo: github.com/JiyunJang-24/lerobot-VAI   (branch feat/knowledge-insulation)
+================================================================================
+
+WHY THIS EXISTS
+  Stock LeRobot DiffusionPolicy has no language input at all — it conditions on
+  state and images only. Our cross-embodiment corpora carry a task instruction per
+  episode, and we needed a policy that uses it while staying much simpler than a
+  VLA, so that a result could be attributed to the visual representation rather than
+  to a VLM failing to interpret it. So language conditioning was added to the
+  existing DiffusionPolicy rather than a new policy being written.
+
+  Everything is OFF BY DEFAULT. Any existing diffusion run behaves exactly as before.
+
+
+--------------------------------------------------------------------------------
+1. THE THREE FILES
+--------------------------------------------------------------------------------
+  src/lerobot/policies/diffusion/configuration_diffusion.py   the flags
+  src/lerobot/policies/diffusion/modeling_diffusion.py        LanguageEncoder + wiring
+  src/lerobot/scripts/train_dp_embodiment.py                  the training script
+
+
+--------------------------------------------------------------------------------
+2. THE FLAGS  (configuration_diffusion.py, around line 124)
+--------------------------------------------------------------------------------
+    language_conditioned: bool = False
+    language_model: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+    language_embedding_dim: int = 256
+
+  Same file also carries the vision-backbone flags used by these experiments:
+
+    use_siglip_encoder: bool = False      # swap the ResNet encoder for a SigLIP tower
+    siglip_encoder_path: str = ""         # a .safetensors tower to load into it
+    freeze_vision_encoder: bool = False
+    aux_siglip_encoder_path: str = ""     # a SECOND tower, features concatenated
+    freeze_aux_vision_encoder: bool = False
+    aux_branch_dropout: float = 0.0
+
+
+--------------------------------------------------------------------------------
+3. HOW LANGUAGE ATTACHES  (modeling_diffusion.py)
+--------------------------------------------------------------------------------
+  It is appended to the UNet's GLOBAL CONDITIONING VECTOR, alongside the state and
+  image features. It is not cross-attention and it does not touch the denoiser's
+  internals — the vector the UNet is already conditioned on simply gets longer.
+
+  3a. LanguageEncoder  (line ~256)
+
+      task string
+        -> SmolVLM2 tokenizer
+        -> SmolVLM2 text-model INPUT EMBEDDINGS   <- FROZEN, requires_grad = False
+        -> mean-pool over tokens (attention-mask weighted)
+        -> nn.Linear(embedding_dim -> 256)        <- the only trainable part
+        -> a 256-d vector per sample
+
+      Two deliberate choices:
+
+      * THE TEXT TOWER IS FROZEN. These experiments exist to test whether a VISUAL
+        representation transfers across embodiments. A trainable text tower would be
+        a second moving part and any difference between runs could be attributed to
+        it. Only the 256-d projection learns.
+
+      * ONLY THE INPUT EMBEDDINGS ARE USED, not the transformer stack. The corpora
+        have a handful of distinct instructions and they are short; running 32 Llama
+        layers per batch to distinguish them would cost far more than it buys. If
+        the task set were large or compositional this is the first thing to upgrade.
+
+      Embeddings are computed once per distinct task string and CACHED in a dict, so
+      the text side costs nothing on the training loop's critical path.
+
+  3b. Where it joins the conditioning  (line ~323 and ~432)
+
+      __init__:
+          self.language_encoder = None
+          language_cond_dim = 0
+          if config.language_conditioned:
+              self.language_encoder = LanguageEncoder(config)
+              language_cond_dim = self.language_encoder.out_dim      # 256
+
+          global_cond_dim = state_cond_dim + image_cond_dim
+                          + env_cond_dim + language_cond_dim
+
+      _prepare_global_conditioning:
+          global_cond_feats = [state, images, (env_state), ...]
+          if self.language_encoder is not None:
+              tasks = batch.get("task")
+              if tasks is None:
+                  raise KeyError(...)          # loud, not silent — see below
+              global_cond_feats.append(self.language_encoder(tasks, device))
+          return torch.cat(global_cond_feats, dim=-1)
+
+      The missing-task case RAISES rather than falling back to zeros. A silent
+      fallback would train a "language-conditioned" policy that never sees language
+      and looks healthy the whole way.
+
+
+--------------------------------------------------------------------------------
+4. ONE PLUMBING DETAIL THAT MATTERS
+--------------------------------------------------------------------------------
+  `batch["task"]` is a list of STRINGS, so the usual
+      batch = {k: v.to(device) for k, v in batch.items()}
+  drops it — `.to()` is only applied to tensors and the string list is silently lost
+  or crashes. The training script pulls it out first and puts it back:
+
+      tasks = batch.get("task")
+      batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+      if tasks is not None:
+          batch["task"] = tasks
+
+  If you write your own loop, keep this. Otherwise the KeyError above fires, which is
+  at least loud.
+
+  Also: this dataset path returns images WITHOUT the n_obs_steps axis while state has
+  it, so the script adds it:
+      if batch[CAMERA].ndim == 4:
+          batch[CAMERA] = batch[CAMERA].unsqueeze(1)
+
+
+--------------------------------------------------------------------------------
+5. RUNNING IT
+--------------------------------------------------------------------------------
+  python src/lerobot/scripts/train_dp_embodiment.py \
+      --mode scratch --steps 30000 --batch-size 64 --output-dir outputs/dp/run1
+
+  --mode selects the vision arrangement, which is what these experiments vary:
+      scratch           stock SigLIP, trainable                    (the control)
+      frozen            contrastive-pretrained tower, frozen
+      finetune          contrastive-pretrained tower, trainable
+      online            pretrained + the contrastive loss kept on during training
+      dual_both         contrastive AND stock towers, both trainable
+      dual_freeze_c     contrastive frozen, stock trainable
+      dual_freeze_s     stock frozen, contrastive trainable
+      dual_freeze_both  both frozen
+  --aux-dropout 0.3     drop the aux tower's branch, per sample, so the policy
+                        cannot silently ignore it
+
+  Language conditioning is ON in all of them (the script sets language_conditioned=
+  True unconditionally); it is the vision side that varies.
+
+  Settings used for every result we have: batch 64, 30,000 steps, chunk 16, lr 1e-4,
+  bf16 autocast, front camera only.
+
+  Corpus: dataset_git/barx_panda_ur5e_iiwa/{IIWAOmron,PandaOmron,UR5eOmron}/
+          pretrain/PnPSinkToCounter/lerobot — 1,445,640 frames, 2,900 episodes,
+          one task across three embodiments.
+
+
+--------------------------------------------------------------------------------
+6. TWO THINGS TO KNOW BEFORE TRUSTING A CHECKPOINT
+--------------------------------------------------------------------------------
+  * NORMALIZER FILES. policy.save_pretrained() writes only config.json and
+    model.safetensors. Evaluation also needs the processor pipelines
+    (policy_preprocessor*, policy_postprocessor*), and a checkpoint missing them
+    loads fine and then emits actions on the wrong scale — a silent failure. The
+    training script now writes them; older checkpoints were backfilled with
+    tools/repair_checkpoint_processors.py.
+
+  * WHICH STATS. Both trainers normalise with `dataset._datasets[0].meta.stats`, i.e.
+    the FIRST tree only (IIWAOmron), not an aggregate over the three robots. That is
+    not ideal for a multi-robot corpus, but it is consistent across every run, and
+    the saved processors reproduce exactly those numbers — unnormalising with
+    different statistics than were used to normalise would be wrong regardless of
+    which set is better.
+
+================================================================================

@@ -1,0 +1,126 @@
+================================================================================
+DOES THE CONTRASTIVE BACKBONE GIVE THE SAME FEATURE FOR THE SAME EEF POSE
+ON A ROBOT IT HAS NEVER SEEN?
+tower: outputs/siglip_pretrain/all4_n42_all  (the one the dual-tower DP runs load)
+tool:  tools/analyze_pose_invariance.py      2026-09-07
+================================================================================
+
+SHORT ANSWER
+  Yes, and by a wide margin -- inside the synthetic render domain.
+  Same pose, unseen robot .................... centred cosine +0.974
+  Different pose, same robot ................. centred cosine -0.042
+  Held-out robot -> nearest training frame ... 100% same pose, 0.0 cm error
+  The stock SigLIP control scores +0.104 and 22% on the same measurements, so the
+  separation is the pre-training, not something SigLIP already did.
+
+HOW TO READ THE NUMBERS
+  All cosines are CENTRED (batch mean subtracted) as well as raw. SigLIP features
+  are anisotropic enough that ANY two images sit near raw 0.95, so a raw cosine of
+  0.97 means nothing on its own -- look at the centred column. The stock tower makes
+  this obvious: raw +0.967 for the same pose and +0.963 for a different one, a gap
+  of 0.004, which centring turns into +0.116 versus -0.007.
+
+SETUP
+  56combo_48_bg12_closed, the corpus this tower was trained on. 42 embodiments were
+  in training, 14 were held out entirely. 24 canonical EEF poses, 6 embodiments per
+  group per pose, 288 frames. Background, camera view and colour are held FIXED in
+  the headline condition so that the only thing differing between two frames is the
+  pose and the robot -- otherwise a low similarity could be the backdrop.
+
+--------------------------------------------------------------------------------
+1. SAME POSE, DIFFERENT ROBOT  (background / view / colour fixed)
+--------------------------------------------------------------------------------
+                                        contrastive tower      stock (control)
+                                        centred     raw        centred     raw
+  same pose, train x train              +0.979    +0.982       +0.116    +0.967
+  same pose, train x HELD-OUT           +0.974    +0.977       +0.104    +0.968
+  same pose, HELD-OUT x HELD-OUT        +0.971    +0.975       +0.109    +0.968
+  DIFFERENT pose, same embodiment       -0.042    +0.105       -0.007    +0.963
+
+  Being held out costs 0.005 to 0.008 of cosine. Two robots the tower has NEVER
+  seen, at the same pose, sit at +0.971 -- while the SAME robot at a different pose
+  sits at -0.042. The representation is essentially reading pose and ignoring which
+  robot it is looking at, and that behaviour does not depend on having trained on
+  the robot.
+
+--------------------------------------------------------------------------------
+2. RETRIEVAL: hand it a held-out robot, does it find the pose?
+--------------------------------------------------------------------------------
+  Each held-out frame is matched against the TRAINING frames only.
+
+                              contrastive       stock
+  same pose top-1               1.000           0.222
+  same pose top-5               1.000           0.521
+  median EEF error              0.0 cm          7.9 cm
+  mean EEF error                0.0 cm          --
+
+  Reported as an EEF distance as well as a hit rate, because "wrong" says nothing
+  about how wrong. The contrastive tower is not approximately right; it retrieves
+  the exact pose every time.
+
+--------------------------------------------------------------------------------
+3. WHAT THE INVARIANCE SURVIVES  (relaxing the nuisance axes one at a time)
+--------------------------------------------------------------------------------
+  allowed to differ            train x HELD-OUT   held-out retrieval top-1
+  nothing (headline)                +0.974              1.000
+  background + colour               +0.969              0.993
+  background + colour + camera view +0.951              0.979
+
+  Backdrop and robot paint cost almost nothing. Camera view costs 0.023 and 2% of
+  retrieval -- but note WHY it survives: all four canonical views are IN the
+  training data. This is invariance across geometries it has seen, not invariance to
+  geometry in general.
+
+  THE DISTINCTION MATTERS, and it is where this tower actually fails. Measured
+  separately (tools/measure_feature_displacement.py), as a fraction of the distance
+  a real pose change produces:
+        different background ...  1%      shift the image 40 px .... 31%
+        A DIFFERENT ROBOT ......  4%      zoom out to 0.75x ........ 41%
+                                          a real RoboCasa frame .... 102%
+  A fifth camera geometry is out of distribution and the representation breaks. The
+  only four the tower ever saw put the gripper in tight 12-22 px clusters.
+
+--------------------------------------------------------------------------------
+4. HOW SHARPLY IS IT TUNED?  (centred cosine vs the real distance between poses)
+--------------------------------------------------------------------------------
+  pose separation      contrastive      stock
+  0-1 cm  (same pose)    +0.974         +0.108
+  1-5 cm                 +0.239         +0.098
+  5-10 cm                +0.034         +0.045
+  10-20 cm               -0.074         -0.010
+  20-100 cm              -0.137         -0.106
+
+  This is worth noticing and is not entirely good news. The falloff is very sharp:
+  poses 1-5 cm apart already drop from +0.974 to +0.239. The tower behaves more like
+  a lookup that identifies WHICH of the 48 canonical poses it is seeing than like a
+  smooth embedding of pose as a continuous quantity.
+  For retrieval that is ideal. For a policy it is less so: a controller wants nearby
+  poses to have nearby features, so that a small error in the visual estimate makes
+  a small error in the action. A representation that is peaked at 48 discrete points
+  offers little to interpolate between. Training on many more poses -- the newer
+  8000-pair export -- is the obvious thing to check here.
+
+================================================================================
+WHAT THIS DOES AND DOES NOT SAY ABOUT THE DUAL-TOWER DP EXPERIMENT
+================================================================================
+  SUPPORTS: the premise. The frozen tower really does encode EEF pose in a way that
+  ignores robot identity, on robots it never saw. If a policy can read that, it has
+  embodiment-invariant pose information for free.
+
+  DOES NOT ADDRESS: whether a policy CAN read it on real images. Every number above
+  is measured on synthetic renders. The same tower places a real RoboCasa frame 102%
+  of the way from a synthetic frame to a completely unrelated image -- fully
+  decorrelated. That is why a single frozen tower gave the policy nothing
+  (CLAUDE.md 9.6: frozen 0.0388 against a stock tower's 0.0387), and it is the
+  reason to expect the dual-tower runs to help modestly at best.
+
+  The measurement that will settle it is the aux-dropout run, D_freeze_c_drop. If
+  dropping the frozen branch 30% of the time costs nothing, the policy was not
+  reading it in the first place.
+
+FILES
+  outputs/pose_invariance.json        headline condition (all nuisance fixed)
+  outputs/pose_invariance_bg.json     background + colour varying
+  outputs/pose_invariance_all.json    + camera view varying
+  outputs/logs/pose_inv*.log          the runs
+================================================================================

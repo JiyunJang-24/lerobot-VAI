@@ -1,0 +1,290 @@
+================================================================================
+EVERY EXPERIMENT IN THIS PROJECT — WHAT WAS RUN, WHAT CAME OUT, WHERE IT LIVES
+repo /home/gpuuser/jiyun/lerobot-VAI  (branch feat/knowledge-insulation)
+written 2026-09-07.  Longer prose on any line item: CLAUDE.md sections 9-10.
+================================================================================
+
+Note on paths: `outputs/` is a SYMLINK to /dataset/jiyun/outputs. Everything below
+survives a root-disk problem, and nothing under outputs/ is in git (it is
+.gitignore'd) -- only code and CLAUDE.md are versioned.
+
+THE THREAD RUNNING THROUGH ALL OF IT
+  Collecting action demonstrations for every robot does not scale; rendering a robot
+  from its URDF does. Can static embodiment data -- never used for policy learning --
+  let a policy act on robots it has no demonstrations for? Everything below is an
+  attempt to answer some part of that.
+
+
+================================================================================
+PART 1 — THE CONTRASTIVE VISUAL ENCODERS (what you asked about first)
+================================================================================
+
+1.1 WHAT THEY ARE
+    SigLIP vision towers (86.4M params, from SmolVLM2-500M) pre-trained on
+    eef_pairs renders, where 56 embodiments are posed at the SAME canonical EEF
+    states. Positive pair = same pose, different robot. Trained with supervised
+    contrastive loss, and later with EEF-state and EEF-pixel regression heads.
+
+    LOCATION  outputs/siglip_pretrain/<tag>/
+              vision_tower.safetensors     the tower
+              pretrain_info.json           args AND the held-out embodiment list
+              head_eef_pixel.pt            the pixel head, where trained
+              head_eef_state.pt            the state head, where trained
+
+    THE TOWERS
+      stock                          untrained reference (no pre-training)
+      contrastive_mean_b16           contrastive only, mean pooling
+      contrastive_tokens_b16         contrastive only, per-token
+      eef_mean_b16 / eef_attn_b16    EEF-state regression only
+      both_*_b16 (4 variants)        contrastive + EEF, mean/token x 4/6 views
+      all4_n4 / n8 / n16 / n32 / n42 the embodiment-count ladder (§1.3)
+      all4_n42_eefstate              EEF state only, 42 embodiments
+      all4_n42_eefpixel              EEF pixel only, 42 embodiments
+      all4_n42_all                   contrastive + state + pixel  <- THE ONE TO USE
+
+1.2 WHAT THEY WERE TESTED ON — held-out embodiment evaluation
+    tools/eval_heldout_embodiment.py, results in outputs/heldout_*.json
+    Three metrics, because the cosine gap alone cannot separate invariance from
+    collapse: A/B/C pair split, pose retrieval top-1 (query an UNSEEN embodiment
+    against seen ones), and a linear embodiment probe (should fall to chance).
+
+    RESULT: the representation transfers, and had not saturated at 42 embodiments.
+      embodiments  held-out gap  pose retr@1  emb-probe  (held-out size)
+      stock            -0.099      0.118-0.210   0.15-0.52     --
+      4                +0.329      0.587         0.024         52
+      8                +0.646      0.785         0.000         48
+      16               +0.668      0.848         0.005         40
+      32               +0.973      0.969         0.009         24
+      42               +0.994      0.987         0.015         14
+    CAVEAT: the held-out set SHRINKS as N grows (52 -> 14), so the x axis moves the
+    test set too. Stated on the figure rather than hidden.
+    FIGURES outputs/heldout_scaling.png, outputs/heldout_objectives.png
+
+    OBJECTIVES at 42 embodiments, same 14 held out:
+      contrastive      gap +0.994  retr 0.987  probe 0.015
+      EEF state        gap +0.798  retr 0.969  probe 0.029
+      EEF pixel        gap +0.154  retr 0.799  probe 0.324   <- barely invariant
+      all three        gap +0.988  retr 0.982  probe 0.000   <- use this one
+
+1.3 WHERE THE TOWERS WERE THEN USED — and the result that reframed everything
+    outputs/dp_embodiment/{scratch,frozen,finetune,online}/
+      A language-conditioned Diffusion Policy on PnPSinkToCounter (IIWA/Panda/UR5e),
+      30k steps, comparing a pre-trained tower frozen / fine-tuned / trained online
+      against a stock tower.
+      RESULT, step-matched:  scratch 0.0387  frozen 0.0388  finetune 0.0383
+                             online 0.0395
+      All within 0.001. The pre-trained tower bought the policy NOTHING.
+
+    THE DIAGNOSIS (tools/predict_eef_pixel.py, measure_feature_displacement.py):
+      The EEF-pixel head locates the gripper to 3-5 px on embodiments it never saw
+      -- but collapses to near chance on real policy images. Perturbing an image and
+      measuring how far its feature moves, as a fraction of a real pose change:
+          different background    1%     shift 40 px          31%
+          furniture recolour      2%     zoom out 0.75x       41%
+          A DIFFERENT ROBOT       4%     a policy-corpus frame 102%
+      The invariance that got trained is to embodiment and appearance. It is NOT
+      invariance to camera geometry, and a policy frame is fully decorrelated.
+      That is why a frozen contrastive tower matched a frozen stock one.
+    FIGURES outputs/eef_pixel_*.png, outputs/feature_displacement.png
+
+
+================================================================================
+PART 2 — CROSS-EMBODIMENT MOTION PREDICTION (two images -> Cartesian delta)
+================================================================================
+
+2.1 EXPERIMENTS 1 & 2 — synthetic, MLP head on the tower
+    outputs/motion_prediction/{exp1_n42, exp2A_n*, exp2B_n*}/
+      results.json (per-embodiment breakdown), motion_head.pt, vision_tower.safetensors
+
+    Q1 does motion understanding generalise to unseen morphology?  YES
+      42 train / 14 held-out embodiments:
+        seen      0.41 cm   dir cos 0.993   rot  8.2 deg   grip 0.992
+        HELD-OUT  0.67 cm   dir cos 0.980   rot 10.8 deg   grip 0.970
+        baselines: predict-the-mean 4.66 cm, identity rotation 60.2 deg
+
+    Q2 does embodiment diversity help, or is it just more data?  DIVERSITY
+      protocol A grows the data with embodiment count, B holds it fixed at 60k:
+        n     A samples  A MAE    B samples  B MAE
+        2       8,000    3.61 cm    60,000   3.56 cm
+        4      16,000    2.54       60,000   2.34
+        8      32,000    1.73       60,000   1.79
+        16     64,000    1.20       60,000   1.16
+        42    168,000    0.74       60,000   0.84
+      A ends with 2.8x B's data and the curves are indistinguishable.
+      CONTROL: seen-split error moves the OTHER way, 0.27 -> 0.46 cm. Few
+      embodiments is memorisation, not an easier problem.
+    FIGURE outputs/motion_experiments.png
+
+2.2 POSE-DIVERSITY LADDER — and a confound worth remembering
+    outputs/motion_prediction/{pose48,pose96,pose144}/, outputs/pose_ladder_common.json
+      42 embodiments and 60k samples held FIXED, only pose count varies.
+        poses  scored on its OWN pose set   scored on ONE COMMON pool
+        48            0.60 cm                      2.18 cm
+        96            0.74                         1.13
+        144           0.84                         0.83
+      Read raw, it says more poses is WORSE. That is task difficulty, not model
+      quality: each run was tested on pairs from its own pose subset. On one common
+      pool the ordering reverses and pose diversity is worth 2.6x.
+      GENERAL LESSON: any ladder that varies the data also varies the test set
+      unless you force it not to.
+    FIGURE outputs/pose_ladder.png
+
+2.3 EXPERIMENT 3 — does the motion objective help a POLICY?  CANNOT TELL
+    outputs/dp_motion/{A_vanilla,A_vanilla_s1,B_real,C_synth_real,C_synth_real_s1,D_headroom}/
+      Diffusion Policy, UR5e excluded from task training then scored.
+        A vanilla        0.0355 on held-out UR5e
+        B real motion    0.0376
+        C synth+real     0.0373
+        D_headroom       0.0348   <- UR5e WITH its own demonstrations
+      So a UR5e demonstration is worth 0.0007 on this metric, while the seed spread
+      is 0.0021 -- three times the entire headroom. Not a negative result; a
+      measurement with no resolution. Do not report it as "synthetic motion does
+      not help".
+    FIGURE outputs/exp3_headroom.png
+
+2.4 REAL-ROBOT TRANSFER (Jaco) — direction transfers, magnitude does not
+    outputs/jaco_motion_{base_s0,base_s1,base_s2,pre_s0,pre_s1,pre_s2}.json
+      Trained on 4 non-Jaco embodiments of visual_robust_new_barx_ur5e, tested on
+      Jaco. `pre_*` starts from the 144-pose synthetic run.
+                            stock tower        synthetic-pretrained    seeds
+        seen translation    1.84 cm            1.47 cm                 separated
+        seen direction cos  0.884              0.921                   separated
+        HELD-OUT Jaco MAE   2.82 cm            2.90 cm                 OVERLAP
+        HELD-OUT Jaco cos   0.712              0.756                   separated
+        rotation            6.0 deg            6.2 deg   (identity baseline 5.4)
+      Synthetic pre-training transfers DIRECTION to a novel arm but not MAGNITUDE.
+      Rotation is never learned in the real domain, in 6 runs out of 6.
+    FIGURES outputs/jaco_pretrain.png, outputs/jaco_transfer.png
+
+
+================================================================================
+PART 3 — VLM MOTION VQA (SmolVLM answers in English)
+================================================================================
+
+3.1 FIRST ROUND, old renders
+    outputs/vlm_motion/{rot_on,rot_on_s1,rot_off,novary}/model, outputs/vlm_eval_*.json
+      Held-out clause-Jaccard 0.152, against 0.000 untrained and 0.055 for always
+      emitting the single most common sentence. Partially mode-collapsed: 40
+      distinct outputs where the truth had 120.
+
+3.2 SECOND ROUND, the redesigned export
+    DATA  /dataset/jiyun/dataset_git/eef_pairs/56combo_8000_local_motion_27cam_kitchen_l8s0
+          448,000 pairs, 56 embodiments, 27 cameras, one kitchen, 180x320 AND 512x910
+    outputs/vlm_motion_v2/{cam,cam_s1,arm,gripper,world,cam_norot,high,high_arm}/model
+    outputs/vlm_eval_v2_*.json, outputs/vlm_region_*.json
+
+      run         SYN held  held tr  held rot  distinct   REAL Jaco tr
+      cam           0.163    0.180    0.147    47/95        0.182
+      cam_s1        0.158    0.183    0.168    28/95        0.196
+      arm           0.169    0.199    0.162    41/95        0.172
+      gripper       0.162    0.188    0.168    41/94        0.209
+      world         0.185    0.246    0.159    52/96        0.120
+      cam_norot     0.195    0.204     --      14/74        0.222
+      high          0.203    0.235    0.200    76/93        0.159
+      high_arm      0.208    0.230    0.212    77/93        0.169
+
+      RESOLUTION IS THE ONE BIG EFFECT: prediction diversity 30-49% -> 82% at
+      512x910, and rotation 0.147-0.168 -> 0.200-0.212. Predicted: at 180x320 a
+      5-degree rotation moves the gripper's extremities 0.87 px, a ninth of a patch.
+
+      UNSEEN HARDWARE IS NEARLY FREE: seen minus held-out is +0.006 to +0.031 with
+      seed noise 0.010, and the `arm` split -- arms never seen in any combination --
+      has the SMALLEST gap. Note that a RANDOM holdout on this 8x6 grid leaves every
+      arm and gripper in training, so it tests unseen COMBINATIONS, not hardware.
+
+      BUT NOTHING IS GOOD ANYWHERE. Even in the densest 30 px of the frame, on
+      trained embodiments, the best model reaches 0.195. Both splits plateau
+      together, so the bottleneck is neither morphology nor coverage.
+      Interpretable breakdown (`high`, 400 samples): exact sentence 0.000 in 400
+      attempts; direction recall 0.600 but the model asserts motion on a stationary
+      axis 79-91% of the time, so that is coverage rather than discrimination; and
+      the magnitude word is a constant "slightly" (0.045 correct on "moderately",
+      0.000 on "far").
+
+      THE REAL-DATA COLUMN IS NOT TRUSTWORTHY: models trained on camera-frame labels
+      are scored against END-EFFECTOR-frame labels, a convention none of them saw.
+      My error. Comparisons within the camera-frame runs still hold.
+    FIGURES outputs/vlm_motion_results.png, outputs/eef_pixel_distribution.png
+    REPORT  outputs/vlm_motion_v2_report.txt   (306 lines, full detail)
+
+
+================================================================================
+PART 4 — EXPERIMENT 08, LIBERO  (JUST FINISHED — ready for your evaluation)
+================================================================================
+
+QUESTION  Can task knowledge learned from demonstrations on a few robots transfer to
+          new embodiments using only STATIC synthetic embodiment data?
+
+DATA      /dataset/jiyun/dataset_git/visual_robust_libero  (28 GB, v3.0)
+            action/            8 trees, 47,031 frames -- the policy corpus,
+                               IDENTICAL in every setting
+            synthetic_randik/  4 trees, 23,040 frames -- static robot poses, no task
+            synthetic_replay/  8 trees, 50 image streams per row
+            metadata/embodiments.json   24 combinations pre-labelled into
+                               training / seen_robot_seen_gripper /
+                               seen_robot_unseen_gripper / unseen_robot_seen_gripper /
+                               unseen_robot_unseen_gripper
+
+TRAINED   SmolVLA, 30,000 steps, batch 16, all eight on one GPU each.
+CHECKPOINTS  outputs/exp08/<tag>/checkpoint_{010000,020000,030000}/
+             plus history.json with the full loss curve
+
+  tag                aux objective                    final action loss   aux CE / acc
+  A_vanilla          none                                   0.0248            --
+  A_vanilla_s1       none (seed 1)                          0.0168            --
+  B1_state_real      "Where is the gripper?"  ACTION        0.0249        0.151 / 1.00
+  B2_pixel_real      "Where is the EEF in the image?" ACTION 0.0297       0.463 / 1.00
+  C1_state_synth     same question, SYNTHETIC embodiments   0.0273        0.756 / 0.96
+  C2_pixel_synth     same question, SYNTHETIC embodiments   0.0269        1.021 / 1.00
+  D_motion_synth     two frames -> Cartesian displacement   0.0259        1.678 / 0.85
+  LAP                action chunk described in English      0.0465            --
+
+DESIGN POINTS THAT MATTER WHEN READING THE EVAL
+  * The action corpus AND the policy config are identical in all eight. Only the
+    auxiliary differs. B vs C is the hinge: same question, same answer format, only
+    the frames' embodiments differ, so any gap is embodiment diversity.
+  * Answers use observation.eef_base_rel, NOT eef_pose. libero_object seats the base
+    on the floor while the other suites raise it to z=0.912, so the same gripper
+    height reads 0.205 in one suite and 0.994 in another; a world-frame answer would
+    encode which suite a frame came from.
+  * train_expert_only is False EVERYWHERE, including the vanilla baselines. It
+    defaults to True and freezes the VLM -- the first attempt had every auxiliary
+    stuck at CE 11.0, which is ln(49280), exactly chance. Unfreezing only the
+    auxiliary runs would confound "the auxiliary helped" with "the VLM was
+    trainable".
+  * LAP is the one setting with knowledge insulation on (flow-matching gradient cut
+    off from the VLM). Its higher action loss, 0.0465, is expected and it is not
+    strictly comparable to the others.
+  * Action loss barely separates the settings (0.0248 vs 0.0249-0.0297) and the
+    two vanilla seeds differ by 0.008 on their own. That is reconstruction on
+    TRAINED embodiments, a different question from the transfer this experiment
+    asks about. The answer is in your evaluation, not here.
+
+
+================================================================================
+STILL MISSING, ACROSS EVERYTHING
+================================================================================
+  1. NO TASK-SUCCESS NUMBER EXISTS ANYWHERE IN THIS REPO. robosuite/robocasa/mujoco
+     are not installed and cfg.env was never set, so pc_success has never been
+     computed. Every number above is action loss, a feature statistic, or a VQA
+     score. Exp08's evaluation on your other server is the first real task-success
+     measurement this project will have.
+  2. The camera-geometry gap (Part 1.3) is unaddressed. Random resized crop /
+     translation augmentation attacks it and needs no re-render.
+  3. The real-data VQA evaluation convention (Part 3.2) needs fixing before those
+     numbers mean anything.
+
+================================================================================
+CODE MAP
+  src/lerobot/scripts/pretrain_siglip_eefpairs.py   contrastive / EEF pre-training
+  src/lerobot/scripts/motion_data.py, motion_data_v2.py   conventions and guards
+  src/lerobot/scripts/train_motion_prediction.py    experiments 1 and 2
+  src/lerobot/scripts/train_dp_embodiment.py        the Diffusion Policy settings
+  src/lerobot/scripts/train_vlm_motion.py, _v2.py   the VLM motion VQA
+  src/lerobot/scripts/train_libero_exp08.py         experiment 08
+  src/lerobot/policies/smolvla/exp08_vqa.py         state / pixel / motion answers
+  tools/eval_heldout_embodiment.py                  THE tower evaluation
+  tools/predict_eef_pixel.py, measure_feature_displacement.py   the diagnosis
+  tools/eval_vlm_motion.py, eval_vlm_by_region.py   VLM scoring
+  tools/build_exp08_aux_cache.py                    fast auxiliary frame cache
+================================================================================

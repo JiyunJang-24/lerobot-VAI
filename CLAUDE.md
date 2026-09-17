@@ -1569,3 +1569,153 @@ part by covering everything and pinning the rest to a constant.
   so holding one out leaves two. `visual_robust_new_barx_ur5e` has 6 *named* embodiments over the
   same episodes and is the better held-out set once its re-export lands.
 * **Still no task success anywhere.** Everything is action loss (section 9.1).
+
+---
+
+## 11. barx3 — robot/scene segmentation split, and where contrastive should attach
+
+Three embodiments, three DIFFERENT tasks, so task and embodiment are perfectly correlated — the
+setup the whole programme exists to study. First 100 episodes of each, **front camera only**.
+
+    IIWAOmron   PnPCounterToSink    100 ep   39,388 frames
+    PandaOmron  TurnOnSinkFaucet    100 ep   30,820 frames
+    UR5eOmron   PnPSinkToCounter    100 ep   50,152 frames   -> 120,360 total
+
+### 11.1 Datasets built (all under dataset_git/, all front-only)
+
+| tree | contents | built by |
+|---|---|---|
+| `barx3_i100_p100_u100` | front+wrist, the original 100-ep subset | `tools/prepare_robocasa_x_dataset.py` |
+| `barx3_front_i100_p100_u100` | front ONLY (`CAMERAS=` at build time) | same, `--cameras` restricted |
+| `barx3_segsplit` | `observation.images.robot` + `.scene` | `tools/build_barx3_segsplit.py` |
+| `barx3_scene_only` | `.scene` alone (video hard-linked) | `tools/make_single_stream_dataset.py` |
+| `vr_seg_robot` | 3 embodiments' ROBOT-SEGMENTED front renders, v3.0 | `tools/build_vr_robot_seg_v21.py` + converter |
+
+`robot` = RGB where the simulator mask is robot, black elsewhere. `scene` = the complement.
+`robot + scene` reconstructs the original to a mean 2.3–2.7/255 (the residual is H.264 ringing at
+the mask edge, a 1–2 px halo; `scene` is therefore not mathematically robot-free).
+
+### 11.2 Model change: `policy.num_image_encoders`
+
+Each image input gets its own SigLIP tower. `=1` is bit-for-bit stock; `=2` deep-copies the first
+tower so both start from the same pretrained weights (399.3M -> 485.8M params, verified identical
+outputs at init). The connector stays shared. Prefix length goes 113 -> 177 tokens with two images
+(64 per image + 48 language + 1 state), which is where the 2.30 -> 1.43 it/s slowdown comes from.
+
+Both images are mutually visible in attention (`mask_ar=0` for all 176 image+language tokens), so
+fusion is the VLM's self-attention — there is no separate fusion module and no image separator
+token (`add_image_special_tokens=False`).
+
+### 11.3 Contrastive change: `dataset.visual_robust_target_image_key`
+
+Pins the visual-robust loss to ONE image input, resolved **by name** from `policy.image_features`
+and asserted. Measured with the loss alone, `encoder_idx=0`:
+
+    tower0 (robot)       197 params, 197 with grad, norm 0.546
+    tower1 (scene)       197 params,   0 with grad, norm 0.000
+    connector (shared)     1 param,    0 with grad
+    VLM text_model       146 params,   0 with grad
+    action expert        145 params,   0 with grad
+
+With `head_mode="none"` the aux path returns `vision_features.mean(1)` before the connector, so
+the contrastive gradient touches the robot tower and **nothing else**. Routing is symmetric —
+pinning to index 1 reverses it exactly.
+
+Caveat worth keeping: gradient isolation is not optimisation isolation. Changing tower 0 changes
+what the shared connector/VLM adapt to, which changes the action-loss gradient reaching tower 1 on
+the next step. What is guaranteed is that no embodiment-invariance pressure is applied *directly*
+to the scene representation.
+
+### 11.4 Results (train action loss, mean of last 3k steps, all 50k steps, effective batch 128)
+
+| run | images | contrastive | action loss | aux |
+|---|---|---|---|---|
+| `barx3_segsplit_vr` | robot+scene, 2 towers | **robot tower only** | **0.0588** | 1.314 |
+| `barx3/baseline` | front+wrist | none | 0.0598 | — |
+| `barx3_front/baseline` | front | none | 0.0613 | — |
+| `barx3_segsplit_baseline/separate` | robot+scene, 2 towers | none | ~0.062 | — |
+| `barx3_single/scene_only` | scene only | none | 0.0623 | — |
+| `barx3_segsplit_baseline/shared` | robot+scene, 1 tower | none | ~0.064 | — |
+| `barx3/contrastive` | front+wrist | shared encoder | 0.0759 | 1.126 |
+| `barx3_front/contrastive` | front | shared encoder | 0.0788 | 1.282 |
+
+Two things stand out, both needing held-out evaluation before they mean anything:
+
+* **The sign of the contrastive effect flips with the encoder split.** On a shared encoder it
+  RAISES action loss (0.0598->0.0759, 0.0613->0.0788). Applied to a dedicated robot tower it
+  lowers it (~0.062->0.0588).
+* **`scene_only` ties `front/baseline`** (0.0623 vs 0.0613). Blacking the robot out entirely
+  costs almost nothing.
+
+### 11.5 The silhouette leaks embodiment — measure it before trusting any scene-side claim
+
+The black hole left where the robot was encodes its pose AND its morphology. A linear probe on
+SigLIP features of the scene-only image identifies which of three robots was removed:
+
+    scene varies per robot (CONFOUNDED, do not quote)      0.972
+    scene held pixel-identical across the 3 renders         0.901     chance 0.333
+
+The first number is confounded — each robot does a different task in different kitchens, so the
+probe can read the kitchen. The clean version uses the visual-robust corpus, where the same frame
+is rendered with three arms, so blacking each out leaves an identical scene. **90.1% is the
+silhouette alone.** "Robot removed" is not robot-free.
+
+### 11.6 Traps hit here — read before touching cameras or a regenerated corpus
+
+**`--dataset.use_wrist_cam=false` does NOT remove the barx wrist camera.** It drops the key
+`observation.wrist_image` (`lerobot_dataset.py:1855`) and keys containing `"wrist"`
+(`lerobot_train.py:434`). The barx key is `observation.images.robot0_eye_in_hand` and matches
+neither. Two runs trained on the wrist while labelled otherwise; they now sit in
+`outputs/barx3_batch36_BOTHCAMS/` with a README, and `run_barx3_nowrist_pair.sh` carries a
+corrected header. **The camera set must be decided when the dataset is BUILT, via `CAMERAS=`.**
+The measurement that should have caught it immediately: bs=32/vb=32 peaked at 72,251 MiB "without
+wrist" against 72,275 MiB with it — a 24 MiB difference means nothing was removed.
+
+**Never borrow another export's metadata to align a regenerated corpus.**
+`visual_robust_seg_regen` has the same TOTAL frame count as `visual_robust_new_barx` but different
+episode boundaries — 48 of 108 episodes differ in length. Cloning that tree's v3.0 metadata would
+misalign every frame past the first divergence while looking perfectly healthy. Build from the
+corpus's own meta.
+
+**Verify a delivered dataset against its OWN metadata, not a reference tree.** The first audit of
+`visual_robust_seg_regen` reported 426 short pairs; that was the wrong reference. Against its own
+meta it is clean: 1,944 video/meta pairs and 324 parquet row counts all match.
+
+**The earlier `visual_robust_new_segmentation` really was broken** — 21–23% of segmentation videos
+truncated at the tail, RGB always complete, every worker log reporting success. Defect report and
+the likely cause (encoder not flushed before close) are in `docs/VR_NEW_SEG_DEFECT.txt`.
+
+**v2.1 -> v3.0 conversion needs three fixes** beyond running the converter: generate
+`episodes_stats.jsonl` (`tools/generate_episode_stats.py`), drop parquet columns not declared in
+`info.json`, and flatten shape-`[1]` features to scalars (`next.reward`, `next.done`) — a
+1-element list fails the `datasets` cast with `Couldn't cast list<element: float> to float`.
+
+**Config read in `train()` is not visible in `update_policy()`.** Add it to `update_policy`'s
+signature and pass it, as the other `visual_robust_*` settings do.
+
+### 11.7 Commands
+
+```bash
+# datasets
+python tools/build_barx3_segsplit.py --episodes 100
+python tools/make_single_stream_dataset.py --keep observation.images.scene --out dataset_git/barx3_scene_only/raw
+python tools/build_vr_robot_seg_v21.py            # then generate_episode_stats + convert to v3.0
+
+# training (all front-only, effective batch 128, 50k steps, ckpt every 10k)
+bash run_barx3_front_pair.sh        # baseline vs contrastive, front original
+bash run_barx3_segsplit.sh          # robot+scene, shared vs separate towers
+bash run_barx3_single.sh            # scene_only
+bash run_barx3_segsplit_vr.sh       # robot+scene + contrastive pinned to the robot tower
+```
+
+### 11.8 What is NOT done
+
+* **No held-out evaluation anywhere.** Every number above is training loss, and the baselines are
+  flat from ~14k steps on 300 episodes. The spread (0.0588–0.0788) is not trustworthy as a ranking
+  until each robot is scored on a task it never demonstrated. This is the single biggest gap.
+* **One seed per configuration.** Replicate spread has repeatedly exceeded between-condition
+  differences in this project (see 10.x and the Experiment 1 notes in `docs/EXP1_RESULTS.txt`).
+* **`shared` + contrastive was deliberately not run** — with one tower the contrastive gradient
+  necessarily also shapes the scene representation, so the requirement cannot be met.
+* The contrastive loss plateaus around 1.3–1.9 against a chance of ln(95)=4.55 and a floor of
+  ln(2)=0.69. Robot-only crops have no background to exploit, which may simply make it hard.

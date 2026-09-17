@@ -1,0 +1,242 @@
+================================================================================
+WHAT DATA WE STILL NEED, AND WHY
+Written 2026-09-14, after Experiment 1
+================================================================================
+
+SHORT VERSION
+
+  One new render corpus is worth commissioning, and it is a variation on
+  selfws_v2 rather than a new idea: the no_kitchen PROTOCOL run inside FURNISHED
+  kitchens, at 4x the scene count, with more arms, several cameras per scene, and
+  the two label types the simulator can emit for free and currently does not
+  (segmentation masks and object poses).
+
+  But do not commission it yet. The scene-count scaling curve is running on
+  existing data right now and it decides the question. Section 0.
+
+  A second, cheaper thing is needed and is not a render at all: an EVALUATION
+  harness for held-out embodiment x held-out task rollouts. Without it the policy
+  result stays a training-loss statement.
+
+
+================================================================================
+0. THE SCALING CURVES -- MEASURED, NOT GUESSED
+================================================================================
+  The only structural difference between eef_pairs (failed) and selfws_v2
+  (worked: 0.838 retrieval on real frames) is a SCENE AXIS -- 32 distinct
+  RoboCasa kitchens, verified distinct (max pairwise scene similarity 0.608).
+  How many scenes that takes, and how many arms, had never been measured.
+  Both curves were run before writing the rest of this document.
+
+  NOISE FLOOR FIRST. Five runs of the IDENTICAL configuration (24 scenes,
+  4 arms, method D) across seeds and budgets:
+      EEF rotation   mean 20.9 deg   sd 1.1    range 19.6 - 22.7
+      EEF translation mean 15.2 cm   sd 0.9    range 13.9 - 16.3
+      pose discrimination mean +0.31 sd 0.04   range +0.26 - +0.36
+  Every claim below is read against those.
+
+0.1 SCENE COUNT -- THE DOMINANT AXIS, STILL FALLING AT OUR MAXIMUM
+  Method D, pooled over two budgets (1,200 states and 350 states; the 350 budget
+  binds at every point, so that arm of the curve varies DIVERSITY ONLY, with
+  volume held at ~340 states).
+
+      scenes    EEF rotation        factor vs previous
+      ------    ------------        ------------------
+         1        112.9 deg
+         2        112.6 deg              1.00x
+         4         97.0 deg              1.16x
+         8         53.1 deg              1.83x
+        16         32.2 deg              1.65x
+        24         20.9 deg  (n=5)       1.54x
+      frozen      100.4 deg
+
+  Monotonic, and the 16 -> 24 step alone is 11 deg = ten times the replicate sd.
+  Nothing has flattened. Extrapolating the ~1.5x per doubling: 48 scenes ~14 deg,
+  96 scenes ~9 deg. Diminishing, but real and large.
+
+  TWO THINGS THIS SETTLES.
+  * At FOUR OR FEWER KITCHENS the rotation error is 97-113 deg, WORSE than the
+    untrained backbone's 100.4 -- and that is method D, which has the explicit
+    EEF term. Scene diversity, not the loss, is what stops alignment destroying
+    state information. eef_pairs had ZERO scenes; this is why it failed.
+  * Pose discrimination saturates by ~8 scenes (+0.31 at 8, +0.31 at 16, +0.36 at
+    24, all within 1-1.5 sd). Scenes beyond 8 buy METRIC EEF ACCURACY, not
+    embodiment invariance. The two properties come from different axes.
+
+0.2 ARM COUNT -- REAL, MONOTONIC, AND MUCH WEAKER
+  All 24 scenes, pooled over two seeds.
+
+      arms    pose discrimination     EEF translation
+      ----    -------------------     ---------------
+        1        +0.029 (n=2)            21.5 cm
+        2        +0.180 (n=2)            17.2 cm
+        3        +0.218 (n=1)            16.7 cm
+        4        +0.304 (n=3)            15.1 cm
+
+  Monotonic on both, still rising at 4, increments shrinking (+0.15, +0.04,
+  +0.09 against an sd of 0.04). One arm gives essentially nothing: with a single
+  arm the positive pairs are same-arm-different-gripper, nearly identical images,
+  so the loss has almost no work to do.
+
+  A NOTE ON HOW THIS WAS READ. An intermediate version of this document said the
+  arm curve saturates at 2, on the strength of the single 3-arm point sitting
+  below the 2-arm one. Adding a second seed at 1 and 2 arms and pooling the three
+  4-arm replicates makes the curve monotonic. The correct statement is the one
+  above: arms help, and much less per unit of render cost than scenes.
+
+0.3 WHAT THAT MEANS FOR RENDER BUDGET
+  Both axes multiply render volume linearly. Over the range we can measure:
+      doubling scenes    ~1.5x reduction in rotation error, repeatedly
+      doubling arms      ~1.1x reduction in translation error, +0.06 pose disc
+  Scenes dominate per unit of cost by a wide margin. Spend there first.
+
+================================================================================
+1. THE CORPUS WORTH COMMISSIONING -- "selfws_v3"
+================================================================================
+
+1.1 THE ONE CHANGE THAT MATTERS MOST: THE PROTOCOL
+
+  selfws_v2/kitchen is TASK TRAJECTORY data. Every embodiment replays the same
+  EEF path by IK, so contact happens, and each arm's contact dynamics differ ->
+  the objects end up in different places. The counterfactual is exact for the
+  gripper (cross-embodiment std 1.6 mm) and only approximate for the objects.
+  That contamination is why the derived masks pick up the paper-towel roll, and
+  why no clean in-domain object probe was possible.
+
+  selfws_v2/no_kitchen already has the right protocol -- "move the gripper
+  through the workspace", free poses, no contact -- but it is an empty room with
+  a coloured wall, so it has no scene and no objects.
+
+  selfws_v3 = the no_kitchen PROTOCOL inside the kitchen SCENES.
+
+  Then nothing in the frame moves except the arm, the counterfactual is exact for
+  everything, and the whole object-divergence caveat disappears. It is also
+  cheaper to generate: no demonstrations needed, no task policy, just IK to
+  sampled reachable poses. This is exactly what the research note argues for --
+  embodiment-alignment data generated independently of task demonstrations -- and
+  we have never actually had it with a scene in the frame.
+
+1.2 AXES, WITH CURRENT VALUES AND TARGETS
+
+  axis                 selfws_v2/kitchen   target        why
+  -------------------  ------------------  ------------  ---------------------------
+  scenes                32                 100-120       section 0.1. THE priority.
+                                                         Rotation error still falling
+                                                         1.5x per doubling at 24.
+  arms                   6                 6-8           section 0.2. Helps, but ~1.1x
+                                                         per doubling. Do not spend
+                                                         render budget here; 6 already
+                                                         allows a 2-arm holdout
+  grippers               5                 5-7           adequate already
+  cameras per scene      1                 3-5           THE known failure mode
+  poses per scene      ~95 (task path)     100+ free     free poses cover the
+                                                         workspace, a task path does not
+  gripper open/closed   one per episode    both          currently a whole-subset flag
+
+  ARMS: UR5e, Panda, IIWA, Jaco, Sawyer, VX300SMobile are present. Kinova3, FR3,
+  xArm7, PiPER, YAM all exist in other corpora in this repo (eef_pairs has 8 arms,
+  LIBERO synthetic has kinova3). Adding them costs nothing but render time and
+  doubles the holdout design space.
+
+  CAMERAS: this is the axis with direct measured evidence behind it. Feature
+  displacement, normalised by a real pose change: different background 1%,
+  different robot 4%, but a 40 px image shift 31% and a zoom-out 41%. The tower
+  is invariant to appearance and NOT to geometry, because every corpus so far
+  gave it one framing (selfws) or four tied to the background (eef_pairs). Three
+  to five genuinely different camera poses per scene is the cheapest fix
+  available and it targets the thing that actually breaks.
+
+1.3 THE TWO LABELS THE SIMULATOR CAN EMIT FOR FREE AND DOESN'T
+
+  SEGMENTATION MASKS. No dataset in the repository ships one. Experiment 1 worked
+  around it by taking the per-pixel MEDIAN across the 30 embodiment renders, which
+  is a robot-free image of the scene, and thresholding. That works -- it is what
+  method C and D train on -- but it has two limits worth removing:
+      * it captures the robot UNION the scene the robot occludes UNION objects
+        that embodiment displaced differently
+      * it only exists when many embodiments render the same row, so it cannot be
+        computed for a single-embodiment dataset
+  A real MuJoCo segmentation pass costs one extra render call. Emit per-link IDs
+  if possible, not just robot/not-robot: it would let us ask whether aligning the
+  GRIPPER region alone beats aligning the whole arm, which is the obvious next
+  ablation and is currently unaskable.
+
+  OBJECT POSES. selfws labels the object only through a task string that is 1:1
+  with the episode, hence 1:1 with the scene. An "object identity" probe there is
+  a relabelled scene probe -- it would look fine and prove nothing. Experiment 1
+  had to borrow LIBERO's environment_state for metric 4, which drags a
+  synthetic-to-synthetic domain gap into the number. Emitting object poses (and
+  ideally object segmentation) makes the object probe in-domain and honest.
+
+1.4 WHAT TO KEEP EXACTLY AS IT IS
+
+  Do not change these. They are why selfws transferred to real policy frames when
+  eef_pairs did not:
+      * the RoboCasa renderer, camera convention and image size that the POLICY
+        data uses (observation.images.<emb>.robot0_agentview_right, 180x320)
+      * every embodiment of a row in the SAME parquet row, pixel-aligned
+      * per-embodiment eef_state, reachable, pos_err_m, rot_err_deg. The
+        reachable/pos_err pair is load-bearing: VX300SMobile reaches only 20-34%
+        of poses, and treating an unreachable render as the same underlying state
+        would be a labelling error, not a hard positive.
+
+  A NOTE ON FRAMING, because it is the lesson that cost the most: eef_pairs put
+  the camera so close that the arm filled the frame, the EEF sat at pixel
+  (110, 33) near the top edge, and the whole workspace was a 26 x 10 x 26 cm box.
+  That corpus taught appearance invariance and nothing transferable. Match the
+  policy's framing, or the corpus is decorative.
+
+
+================================================================================
+2. THE OTHER GAP, WHICH IS NOT A RENDER
+================================================================================
+  EVALUATION FOR HELD-OUT EMBODIMENT x HELD-OUT TASK.
+
+  visual_robust_libero/action is already the research problem in miniature:
+      IIWA_Robotiq85  -> spatial suite only
+      Panda_PandaGr   -> object suite only
+      Panda_Rethink   -> long suite only
+      UR5e_Robotiq85  -> goal suite only
+  Each embodiment sees exactly one task family. The question the whole programme
+  exists to answer is whether IIWA can do an `object` task using what Panda
+  learned. We have the training data for that and no way to score it.
+
+  What is missing is rollout evaluation with these embodiments on suites they
+  never demonstrated. The dual-tower diffusion-policy result currently reads
+  "configuration makes no difference to TRAINING loss on SEEN embodiments"
+  (spread 0.0310-0.0322, while one seed moves 0.0316 -> 0.0306, so seed noise is
+  60% of the between-configuration spread). That is a genuine null, but it is a
+  null about fitting, not about transfer, and it will stay that way until there
+  is a held-out rollout number.
+
+  This is worth more than any new render corpus.
+
+
+================================================================================
+3. THINGS THAT SOUND USEFUL AND ARE NOT, YET
+================================================================================
+  MORE eef_pairs. 74 GB already, 56 embodiments, and no scene axis. Nothing to
+  add until it has one, and if it had one it would be selfws_v3.
+
+  MORE CAMERAS IN ONE KITCHEN. 56combo_8000_local_motion_27cam_kitchen_l8s0 has
+  27 cameras and 1 kitchen. Cameras need to vary WITHIN scenes that also vary;
+  27 views of a single kitchen cannot separate the two.
+
+  REAL-ROBOT DATA. Premature. The synthetic-to-real question has not been reached
+  -- we are still on synthetic-to-synthetic-policy-frames, and Experiment 1 just
+  showed that gap is crossable when the render domain matches.
+
+
+================================================================================
+4. RECOMMENDED ORDER
+================================================================================
+  1. Read the scaling curves (running now, ~90 min). They set the scene and arm
+     targets in 1.2 instead of guessing them.
+  2. Build the held-out-embodiment rollout evaluation. Section 2. Highest value,
+     no rendering.
+  3. Commission selfws_v3 with the axes section 0 selected. Section 1.
+  4. Re-run the dual-tower diffusion policy with the Experiment 1 D checkpoint
+     frozen in, INCLUDING the branch-dropout diagnostic. The previous null used
+     the eef_pairs tower, which we now know was the wrong tower; the diagnostic
+     showed the policy was not reading that branch at all (dropping it 30% of the
+     time changed the loss by -0.0003).

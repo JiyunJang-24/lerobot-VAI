@@ -1,0 +1,356 @@
+================================================================================
+VLM MOTION EXPERIMENT — WHAT WAS RUN, HOW THE LABELS ARE MADE, AND WHAT CAME OUT
+repo /home/gpuuser/jiyun/lerobot-VAI   |   written 2026-09-06
+================================================================================
+
+SHORT ANSWERS TO THE THREE QUESTIONS
+------------------------------------
+1. "SmolVLM gets the current and next image and predicts the motion between them?"
+   Yes. Exactly that, with the answer written as an English sentence.
+
+2. "How is the dataset made, especially the labels?"
+   Section 2. The label is NOT hand-written: it is derived from the recorded
+   end-effector displacement and quantised into direction + magnitude words, with
+   the magnitude thresholds fitted as quantiles of the training data.
+
+3. "Does it do well at positions it has seen?"
+   NO -- and this is the main finding. It does EQUALLY badly at seen and unseen
+   positions, and at seen and unseen embodiments. Section 5 gives the numbers in
+   interpretable terms. The honest summary is that it gets the DIRECTION of a
+   motion component right about 60% of the time while naming more components than
+   actually happened, gets direction AND magnitude right about 37%, and never once
+   produced a fully correct sentence out of 400 attempts.
+
+
+================================================================================
+1. THE TASK
+================================================================================
+    input   [image_t, image_t+h]  +  "How did the gripper move from the first
+                                       image to the second?"
+    output  "move forward moderately, move right slightly, turn left slightly,
+             close gripper"
+
+Model: SmolVLM2-500M-Video-Instruct, all 507M parameters trained (86M vision tower
++ 362M text model + connector). Cross-entropy on the ANSWER tokens only -- the
+prompt and the 128 image placeholder tokens are masked out, or the model would
+spend capacity re-predicting a fixed prompt.
+
+Cost per sample is 165 tokens: 64 per image after the connector pools each image's
+1024 patches, plus the prompt, plus ~10 answer tokens. `do_image_splitting` is
+turned OFF; leaving it on tiles each frame into 26 crops and inflates one sample
+from 165 tokens to 1755 for no added detail at these resolutions.
+
+Training: 4000 steps, batch 8, lr 1e-5, AdamW, bf16. About 80 minutes per run on
+one H100. Eight variants were run in parallel.
+
+
+================================================================================
+2. THE DATASET, AND HOW THE LABEL IS BUILT
+================================================================================
+
+2.1 SOURCE
+    ChiefJang/visual_robust_barx
+      -> eef_pairs/56combo_8000_local_motion_27cam_kitchen_l8s0
+    local: /dataset/jiyun/dataset_git/eef_pairs/56combo_8000_local_motion_27cam_kitchen_l8s0
+    22 GB, converted to LeRobot v3.0.
+
+    ONE ROW IS ONE TRAINING PAIR. `observation.images.current` and `.next` are two
+    separate video streams, so nothing has to be assembled -- this is a large
+    improvement on the previous export, where a pair had to be built by finding two
+    rows sharing an embodiment, background, camera and colour while differing in
+    pose, and every one of those axes was an index that could be silently misaligned.
+
+    448,000 pairs = 56 embodiments x 8000 motions
+    27 cameras, one kitchen scene, both 180x320 and 512x910 renders
+
+2.2 FILTERING APPLIED
+    448,000  raw
+    426,104  gripper visible in BOTH frames (95.1%); a pair with the EEF out of
+             frame has no visual evidence for its label, so it is noise rather than
+             a hard example
+    365,232  after dropping the 8 xarm7_gripper embodiments -- their renders do not
+             match their labels (at an identical pose and camera the other grippers
+             produce near-identical images while those show the arm in unrelated
+             configurations). The metadata gives no hint: same pose set, same 0.951
+             visibility. A silent image/label mismatch.
+    -> 48 embodiments remain, a clean 8 arms x 6 grippers grid.
+
+2.3 THE LABEL -- THIS IS THE PART THAT MATTERS
+    The sentence is generated, never written by hand. Pipeline:
+
+    (a) TAKE THE RECORDED DISPLACEMENT.
+        `observation.delta_eef_cam` = the end-effector displacement between the two
+        frames, expressed in the CAMERA's frame: translation (3) + rotation
+        quaternion xyzw (4). Plus `observation.gripper_delta` in {-1, 0, +1}.
+
+        Camera frame, not world frame, because there are 27 cameras. With a
+        world-frame label the model would have to identify which camera it is
+        looking through before it could use the image at all -- the same 3-D
+        displacement produces very different pixel motion from different viewpoints.
+        A camera-frame label co-varies with the camera, so the question stays
+        answerable from the images alone.
+
+    (b) CONVERT THE ROTATION TO EULER ANGLES, sign-consistently.
+        Quaternions are canonicalised to the w >= 0 hemisphere FIRST. q and -q are
+        the same rotation but give euler angles differing by pi, which would put one
+        physical motion into opposite word buckets.
+
+    (c) FIT MAGNITUDE THRESHOLDS AS QUANTILES OF THE TRAINING DATA.
+        Not fixed constants. Three buckets -- "slightly", "moderately", "far" --
+        with cut points at the 35th, 75th and 93rd percentile of |value|, computed
+        over the TRAINING rows only.
+
+        Quantiles rather than constants because the same word then covers the same
+        share of the distribution regardless of corpus scale, and because a label
+        set dominated by one phrase is memorisable. An earlier version of this
+        objective reached 1.000 content accuracy by 15k steps and then taught the
+        model nothing further.
+
+        Measured on this data: translation idle < 0.028 m, slight < 0.073,
+        moderate < 0.110.
+
+    (d) EMIT ONE CLAUSE PER AXIS THAT EXCEEDS THE IDLE THRESHOLD.
+        translation  +x/-x -> "move forward/backward"
+                     +y/-y -> "move left/right"
+                     +z/-z -> "move up/down"
+        rotation     roll left/right, tilt up/down, turn left/right
+        gripper      "open gripper" / "close gripper"
+        nothing above threshold -> "stay still"
+
+        Joined with commas in that fixed order, e.g.
+        "move backward moderately, move up slightly, roll right slightly, close gripper"
+
+2.4 WHAT THE LABELS LOOK LIKE
+    mean translation magnitude   0.096 m
+    mean rotation magnitude      4.4 degrees
+    gripper changes in           49% of pairs
+    clauses per sentence         4.3 on average
+
+    The translation and rotation magnitudes now match real robot trajectories
+    (0.09 m and ~6.5 degrees over a comparable interval). The previous export
+    sampled poses to COVER the workspace rather than to resemble trajectory
+    segments, and produced 48-degree rotations -- a 7x mismatch that made the same
+    word mean different physical things in the two domains. That is fixed.
+
+2.5 SPLITS
+    The 48 embodiments form a complete 8 arms x 6 grippers grid, which matters:
+
+      random   holds out 12 COMBINATIONS. Every arm and every gripper is still
+               present in training. Verified: zero never-seen arms, zero never-seen
+               grippers. This is NOT an unseen-hardware test, and every held-out
+               result in this project before now was of this kind.
+      arm      holds out every embodiment using 2 of the 8 arms (12 embodiments).
+               Those arms are never seen in any form.
+      gripper  holds out every embodiment using 2 of the 6 grippers (16).
+
+
+================================================================================
+3. THE EIGHT RUNS
+================================================================================
+    cam        baseline: camera-frame labels, 180x320, random (combination) holdout
+    cam_s1     same, seed 1 -- gives the seed noise floor
+    arm        holdout by ARM (never-seen arms)
+    gripper    holdout by GRIPPER (never-seen grippers)
+    world      world-frame labels instead of camera-frame
+    cam_norot  rotation words removed from the label
+    high       512x910 renders instead of 180x320
+    high_arm   512x910 AND holdout by arm
+
+All share data, schedule, batch and learning rate. Scores are clause-level Jaccard:
+"move left slightly" is ONE claim that must match in axis, direction and magnitude.
+Claims are parsed by clause, not as a bag of words, because "move left slightly" and
+"roll left slightly" share tokens and a bag-of-words score mixes the two categories.
+
+
+================================================================================
+4. RESULTS -- THE HEADLINE TABLE
+================================================================================
+  run         SYN seen  SYN held  held tr  held rot   distinct   REAL seen  REAL Jaco
+  ---------------------------------------------------------------------------------
+  cam            0.180     0.163    0.180     0.147     47/95       0.193      0.182
+  cam_s1         0.197     0.158    0.183     0.168     28/95       0.198      0.196
+  arm            0.169     0.169    0.199     0.162     41/95       0.181      0.172
+  gripper        0.202     0.162    0.188     0.168     41/94       0.212      0.209
+  world          0.159     0.185    0.246     0.159     52/96       0.116      0.120
+  cam_norot      0.216     0.195    0.204       --      14/74       0.217      0.222
+  high           0.208     0.203    0.235     0.200     76/93       0.152      0.159
+  high_arm       0.211     0.208    0.230     0.212     77/93       0.182      0.169
+
+  "distinct" = how many DIFFERENT sentences the model produced, out of how many
+  distinct sentences the ground truth contained.
+
+4.1 RESOLUTION IS THE ONE BIG EFFECT
+    Prediction diversity goes from 28-52 of ~95 (30-49%) at 180x320 to 76-77 of 93
+    (82%) at 512x910. At low resolution the model partially collapses onto a few
+    stock sentences; at high resolution it does not.
+
+    Rotation improves with it, 0.147-0.168 -> 0.200-0.212. That was a prediction:
+    at 180x320 the gripper spans about 20 px and a 5-degree rotation moves its
+    extremities 0.87 px, roughly one ninth of a vision-transformer patch. It was
+    below the resolution at which anything could be seen.
+
+4.2 THE REAL-DATA COLUMN IS NOT TRUSTWORTHY
+    Those numbers evaluate on real Jaco trajectories, and they are contaminated by a
+    convention mismatch that is my error: the models are trained on camera-frame (or
+    world-frame) labels, while the real-data evaluation builds its labels in the
+    END-EFFECTOR frame -- a convention none of the models ever saw. The real corpus
+    has no camera extrinsics, which is why that choice was made originally.
+    Comparisons WITHIN the camera-frame runs are still meaningful; the absolute
+    values, and any cam-versus-world comparison on real data, are not.
+
+
+================================================================================
+5. THE MAIN FINDING: IT IS NOT GOOD ANYWHERE, INCLUDING WHERE IT HAS MOST DATA
+================================================================================
+
+5.1 WHY THIS WAS CHECKED
+    The gripper's pixel position is concentrated: across all 448,000 pairs it spans
+    u 242-637 of 910, mean 410 with std 55, so the left 27% and right 30% of the
+    frame are never visited. Vertically the coverage is full. So the natural worry
+    was that the held-out score is dragged down by thin coverage -- and the natural
+    test is to score both splits where coverage is DENSEST.
+
+5.2 SEEN VS HELD-OUT, BINNED BY POSITION
+    Equal-count bins of |u - mode|, with bin edges taken from the held-out split so
+    both splits are compared on the same position distribution. The core bin is
+    30 px wide (u 395-424).
+
+      model       CORE seen  CORE held    gap   |  all bins seen  all bins held
+      -------------------------------------------------------------------------
+      cam            0.176      0.168   +0.009  |      0.166          0.157
+      cam_s1         0.172      0.153   +0.019  |      0.164          0.153
+      arm            0.164      0.158   +0.006  |      0.162          0.158
+      gripper        0.172      0.141   +0.031  |      0.168          0.148
+      high           0.192      0.175   +0.017  |      0.200          0.179
+      high_arm       0.195      0.178   +0.017  |      0.200          0.171
+
+    MORPHOLOGY IS NEARLY FREE. seen minus held-out is +0.006 to +0.031, and the
+    seed spread between cam and cam_s1 is 0.010, so most of those gaps sit at or
+    barely above noise. The `arm` split -- embodiments whose ARM was never seen in
+    any combination -- has the SMALLEST gap of the six, +0.006.
+
+    POSITION IS NOT THE LIMIT EITHER. Core and all-bin numbers agree to within
+    0.01-0.03, and a per-bin sweep across the visited range is flat.
+
+    CAVEAT ON SCOPE: this can only test positions the data visits. The never-visited
+    outer 57% of the frame cannot be evaluated, because there is no data there.
+
+5.3 WHAT 0.19 ACTUALLY MEANS
+    Jaccard is abstract, so the best model (`high`) was scored again in
+    interpretable terms, 200 samples per split:
+
+                        SEEN      HELD-OUT
+      exact sentence    0.000       0.000     never fully correct, 0 of 400
+      direction recall  0.600       0.567     names the right (axis, direction)
+      direction+size    0.373       0.339     ...and the right magnitude word
+      clauses produced  5.7         5.9       against 4.3 in the ground truth
+      distinct outputs  134/187     135/184
+
+    Read carefully: the 60% direction figure is inflated by over-production. The
+    model emits 5.7-5.9 clauses where the truth has 4.3, so it names motion
+    components that did not happen, and naming more raises recall for free. Jaccard
+    charges for that, which is why it reads 0.19 rather than 0.60.
+
+    A typical held-out example:
+      pred: "move forward slightly, move left slightly, move up slightly,
+             roll left slightly, tilt up slightly"
+      true: "move forward slightly, move up far, turn left slightly, close gripper"
+    Right about "forward slightly", right that it moved up but wrong that it was
+    slight, invents "left" and "roll left", and misses the gripper closing.
+
+5.4 SO THE ANSWER TO "DOES IT DO WELL WHERE IT HAS SEEN?"
+    No. It reaches 0.195 in the densest 30 pixels of the frame on embodiments it
+    trained on -- essentially the same as everywhere else and essentially the same
+    as on embodiments it has never seen. Both splits plateau together at a low
+    level.
+
+    That is informative rather than merely disappointing: the bottleneck is NOT
+    morphology generalisation and NOT data coverage. Adding embodiments, cameras or
+    renders should not be expected to move it. The same conclusion is visible in
+    section 4.1, where raising the resolution took prediction diversity from 30-49%
+    to 82% while the score moved only 0.15 -> 0.20: the model learned to answer more
+    diversely, not more correctly.
+
+
+================================================================================
+5.5 IS THE MOTION BIG ENOUGH TO SEE? YES. THE LABEL IS THE PROBLEM.
+================================================================================
+    Displacement magnitudes, and what they are worth in pixels:
+
+      |d| < 5 cm    12% of pairs     26 px at 910 width   ( 9 px at 320)
+      5-10 cm       48%              53 px                (19 px)
+      10-15 cm      30%              84 px                (29 px)
+      > 15 cm       11%             125 px                (44 px)
+      median 0.090 m                 60 px                (21 px)
+
+    The gripper itself spans roughly 20 px at 320 width, so the MEDIAN motion is
+    about one gripper width. That is plainly visible. Only 12% of pairs are small
+    enough to be genuinely hard.
+
+    But the label does not ask "did it move and which way". It asks for a THREE-AXIS
+    decomposition, each with a three-way magnitude. Breaking the model's answers
+    down that way (400 seen samples, `high`, translation only):
+
+      axis                 truth mentions  direction   dir+size   names it when
+                                              right                truth does NOT
+      x forward/backward         65%          0.800      0.485         0.786
+      y left/right               63%          0.632      0.411         0.864
+      z up/down                  65%          0.571      0.352         0.906
+
+      truth magnitude        n    direction right   direction AND magnitude
+      slightly             492         0.650                 0.636
+      moderately           200         0.655                 0.045
+      far                   82         0.805                 0.000
+
+    TWO BEHAVIOURS EXPLAIN EVERYTHING ABOVE.
+
+    (1) It names essentially every axis every time. When the truth says an axis did
+        not move, the model claims it did 79-91% of the time. So the 0.600 direction
+        recall is coverage, not discrimination. Only x is read meaningfully at
+        0.800; z sits at 0.571, close to the 0.5 floor for guessing a sign on an
+        axis you always mention -- and depth is exactly the axis one camera sees
+        worst.
+
+    (2) The magnitude word is a constant. Given a correct direction, magnitude is
+        right 98% of the time when the answer is "slightly", 7% when "moderately",
+        and 0% when "far" -- it never emits that word at all. Magnitude is not
+        partially learned; it is not learned.
+
+    So the intuition that only DIRECTION, and only for large motions, is solidly
+    judgeable from two frames is supported -- with the caveat that even direction is
+    solid only on the axis most visible to the camera.
+
+================================================================================
+6. WHAT IS LEFT, IN ORDER OF WHAT THE EVIDENCE SUPPORTS
+================================================================================
+  1. FIX THE OVER-PRODUCTION FIRST -- it is the largest and cheapest win. The model
+     asserts motion on an axis that did not move 79-91% of the time (5.5). Predict
+     each axis as an explicit 3-way class (negative / none / positive) instead of
+     letting the model choose which clauses to emit. That removes the free-recall
+     loophole and makes the score mean what it appears to mean.
+  2. DROP OR SIMPLIFY THE MAGNITUDE WORD. It is currently a constant "slightly"
+     (5.5): 0.045 correct on "moderately", 0.000 on "far". Either regress the
+     magnitude as a number, or reduce it to two buckets, or remove it and measure
+     direction alone -- which is what the two-frame evidence actually supports.
+  3. CAPACITY AND SCHEDULE. 500M parameters and 4000 steps at batch 8. The high-res
+     runs had not plateaued.
+  4. FIX THE REAL-DATA EVALUATION. It currently scores against a label convention
+     the models were never trained on (4.2). Either express the real labels in the
+     camera frame -- which needs camera extrinsics the real export does not have --
+     or retrain on end-effector-frame labels for that comparison.
+  5. TRANSLATION AUGMENTATION. Random shift/crop would move the gripper across the
+     full frame width for free, covering the outer 57% that no render visits. Note
+     5.2 found no degradation inside the visited range, so this is about robustness
+     for the policy corpus rather than about the scores in this report.
+
+================================================================================
+FILES
+  src/lerobot/scripts/motion_data_v2.py        loader, splits, exclusions
+  src/lerobot/scripts/motion_language.py       label generation (section 2.3)
+  src/lerobot/scripts/train_vlm_motion_v2.py   training
+  tools/eval_vlm_motion.py                     scoring, real-data evaluation
+  tools/eval_vlm_by_region.py                  the seen-vs-held-out region analysis
+  outputs/vlm_motion_v2/<tag>/results.json     per-run history and examples
+  outputs/vlm_region_<tag>.json                region results
+  outputs/eef_pixel_distribution.png           where the gripper appears
+================================================================================

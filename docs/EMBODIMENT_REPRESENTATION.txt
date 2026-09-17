@@ -1,0 +1,292 @@
+================================================================================
+WHAT THE CONTRASTIVE BACKBONE REPRESENTS, AND HOW A HELD-OUT ROBOT DIFFERS
+tower: outputs/siglip_pretrain/all4_n42_all
+tools: analyze_pose_invariance.py, visualize_embodiment_representation.py
+written 2026-09-08
+================================================================================
+
+THE ONE-LINE ANSWER
+  A robot the tower has never seen is represented almost exactly like one it trained
+  on, as long as the two are at the same end-effector pose. Being held out costs
+  0.006 of cosine similarity. What the tower encodes is the POSE; which robot is in
+  the picture is nearly invisible to it.
+
+  That is the property the dual-tower Diffusion Policy experiment is built on, so it
+  is measured here rather than assumed -- and the same measurements show exactly
+  where it stops working, which matters more for the policy than the good news does.
+
+
+================================================================================
+0. WHAT THE DATA LOOKS LIKE   (figure: outputs/embodiment_grid.png)
+================================================================================
+  The corpus is 56 robot arms, each posed at the SAME 48 canonical end-effector
+  states, rendered against 12 backgrounds from 4 camera views in 3 colour variants.
+  There is no task and no object manipulation -- just an arm holding a pose.
+
+  42 of the 56 embodiments were used for pre-training. 14 were held out entirely:
+      0, 1, 3, 8, 12, 14, 23, 27, 28, 33, 34, 36, 42, 49
+
+  The grid figure shows four canonical poses (rows) rendered on four TRAINED arms
+  (blue borders) and four HELD-OUT arms (red borders). Every image in a row is the
+  identical end-effector state. What varies down a row is the arm: link proportions,
+  joint layout, gripper geometry, and colour -- a slim white arm next to a thick
+  orange-and-grey one next to a KUKA. What does NOT vary is where the gripper is.
+
+  This is the whole premise in one picture: if a model can look at any of those
+  eight images and report the same pose, it has separated embodiment from
+  configuration.
+
+  IMPORTANT: only about 21% of (embodiment, pose, background, view, colour)
+  combinations were actually rendered, so a naive grid comes out mostly blank. The
+  figure is built from combinations that exist.
+
+
+================================================================================
+1. SAME POSE, DIFFERENT ROBOT   (all nuisance axes held fixed)
+================================================================================
+  Background, camera view and colour are held FIXED so the only thing differing
+  between two frames is the pose and the robot. Cosines are CENTRED -- see section 5
+  for why the raw numbers are useless here.
+
+                                        contrastive tower      stock (control)
+                                        centred     raw        centred     raw
+    same pose, trained x trained         +0.979    +0.982       +0.116    +0.967
+    same pose, trained x HELD-OUT        +0.974    +0.977       +0.104    +0.968
+    same pose, HELD-OUT x HELD-OUT       +0.971    +0.975       +0.109    +0.968
+    DIFFERENT pose, same robot           -0.042    +0.105       -0.007    +0.963
+
+  Read the first three rows against the fourth. Two robots the tower has NEVER seen,
+  at the same pose, sit at +0.971. The SAME robot at a different pose sits at -0.042.
+  Identity costs 0.008; pose costs 1.013. The representation is reading configuration
+  and discarding morphology, and it does so whether or not it trained on the arm.
+
+  The stock tower separates the same conditions by 0.12 versus -0.01 -- a real but
+  tiny effect, and it is what SigLIP already gives you for free. The contrastive
+  pre-training is responsible for the rest.
+
+
+================================================================================
+2. PER-EMBODIMENT -- is one robot dragging the average?   (embodiment_representation.json)
+================================================================================
+  Mean similarity of each embodiment to all OTHER embodiments at the same pose:
+
+                    n      mean      min       max
+    trained        41    +0.974   +0.925   +0.986
+    HELD-OUT       14    +0.968   +0.937   +0.982
+
+    stock, trained 41    +0.089   -0.063   +0.261
+    stock, HELD-OUT 14   +0.096   -0.024   +0.164
+
+  No held-out robot fails. The weakest embodiment overall is #25 at +0.925 -- and it
+  is a TRAINED one. The five weakest are #25 (trained), #14 (held-out), #38
+  (trained), #12 (held-out), #54 (trained): the two groups are interleaved, which is
+  what you want to see. "Held-out works" is not an average hiding a failure.
+
+  The held-out RANGE is actually narrower (0.937-0.982 against 0.925-0.986). Nothing
+  should be read into that; it is 14 samples against 41.
+
+
+================================================================================
+3. THE FEATURE SPACE   (figure: outputs/embodiment_pca.png)
+================================================================================
+  PCA of the centred features. Colour = which of the canonical poses. Circle = a
+  trained embodiment, triangle = one never seen.
+
+  CONTRASTIVE TOWER: tight, well-separated clusters, one per pose, and within every
+  cluster the circles and triangles are piled on top of each other. A held-out robot
+  lands with its POSE, not with other held-out robots. The top two components carry
+  57% and 44% of the variance -- the structure is genuinely low-dimensional.
+
+  STOCK SIGLIP: a single uniform smear. Colours are scattered, and trained and
+  held-out points are equally scattered. There is no pose structure to find.
+
+  This is the same result as section 1 with nothing averaged away, and it is the
+  figure to show someone who does not want to read a table.
+
+
+================================================================================
+4. HOW SHARPLY IS POSE ENCODED?
+================================================================================
+  Centred similarity against the real distance between two poses:
+
+    pose separation      contrastive      stock
+    0-1 cm (same pose)     +0.974         +0.108
+    1-5 cm                 +0.239         +0.098
+    5-10 cm                +0.034         +0.045
+    10-20 cm               -0.074         -0.010
+    20-100 cm              -0.137         -0.106
+
+  This is the one result that is not straightforwardly good. The falloff is very
+  sharp: poses only 1-5 cm apart drop from +0.974 to +0.239. The tower behaves more
+  like a lookup that identifies WHICH of the 48 canonical poses it is seeing than
+  like a smooth embedding of pose as a continuous quantity.
+
+  For retrieval that is ideal -- and retrieval is perfect: hand it a held-out robot's
+  image and the nearest training frame shares the pose 100% of the time, median EEF
+  error 0.0 cm, against 22% and 7.9 cm for stock.
+
+  For a POLICY it is less good. A controller wants nearby poses to have nearby
+  features, so that a small error in the visual estimate produces a small error in
+  the action. A representation peaked at 48 discrete points offers little to
+  interpolate across. The obvious thing to check is the newer 8,000-pair export,
+  which has far denser pose coverage.
+
+
+================================================================================
+5. TWO METHODOLOGICAL POINTS THAT CHANGE THE NUMBERS
+================================================================================
+  RAW COSINES ARE MEANINGLESS HERE. SigLIP features are anisotropic enough that any
+  two images sit near raw 0.95. The stock tower proves it: raw +0.967 for the same
+  pose and +0.963 for a different one -- a gap of 0.004 that would read as
+  "invariant" if you stopped at the raw column. Subtracting the batch mean turns that
+  into +0.116 against -0.007. Every headline number in this document is centred.
+
+  THE NUISANCE AXES MUST BE HELD FIXED TO MEASURE WHAT YOU THINK. If background and
+  camera view are free to vary, a low similarity could be the backdrop rather than
+  the pose or the robot. Section 1 holds them fixed; section 6 relaxes them
+  deliberately.
+
+
+================================================================================
+6. WHERE THE INVARIANCE STOPS -- and this is the part that matters for the policy
+================================================================================
+  Relaxing the nuisance axes one at a time:
+
+    allowed to differ                  trained x HELD-OUT   held-out retrieval top-1
+    nothing (pose and robot only)            +0.974                1.000
+    + background, robot paint                +0.969                0.993
+    + camera view                            +0.951                0.979
+
+  Backdrop and paint cost nothing. Camera view costs 0.023 -- but note WHY it
+  survives: all four canonical views are IN the training data. This is invariance
+  across geometries it has seen, not invariance to geometry.
+
+  Measured separately, as a fraction of the distance a real pose change produces:
+
+        different background ....  1%      shift the image 40 px .... 31%
+        furniture recolour ......  2%      zoom out to 0.75x ........ 41%
+        A DIFFERENT ROBOT .......  4%      a real RoboCasa frame .... 102%
+
+  A 40-pixel camera shift moves the feature EIGHT TIMES further than swapping the
+  robot does. And a real RoboCasa policy frame sits at 102% -- as far from a
+  synthetic frame as a completely unrelated image. Fully decorrelated.
+
+  The cause is structural, not a bug: the tower trained on four fixed camera poses,
+  which put the gripper in tight 12-22 px clusters. A fifth geometry is out of
+  distribution and the representation has nothing to say about it.
+
+
+================================================================================
+7. WHAT THIS MEANS FOR THE DIFFUSION POLICY EXPERIMENTS
+================================================================================
+  SUPPORTS: the premise. On robots it never saw, the tower encodes EEF pose and
+  ignores identity. If a policy can read that, it gets embodiment-invariant pose
+  information without a single action demonstration on those robots.
+
+  EXPLAINS THE FAILURE ALREADY OBSERVED: a single frozen contrastive tower gave the
+  policy exactly nothing -- 0.0388 against a stock tower's 0.0387 (CLAUDE.md 9.6).
+  Section 6 is why. The representation is excellent on the domain it was trained on
+  and empty on the one the policy actually sees.
+
+  WHAT THE DUAL-TOWER RUNS TEST: putting a trainable stock tower alongside the frozen
+  contrastive one, so the trainable half can supply what the policy needs while the
+  frozen half adds embodiment-invariant structure on top. It can then only help or be
+  ignored. Given section 6, expect modest at best.
+
+  THE RUN THAT SETTLES IT: D_freeze_c_drop, which drops the frozen branch 30% of the
+  time. If that costs nothing, the policy was never reading it.
+
+
+================================================================================
+FILES
+  outputs/embodiment_grid.png              what held-out robots look like
+  outputs/embodiment_pca.png               the feature space
+  outputs/embodiment_representation.json   per-embodiment numbers
+  outputs/pose_invariance{,_bg,_all}.json  sections 1, 4, 6
+  outputs/pose_invariance_report.txt       the earlier, shorter write-up
+  tools/visualize_embodiment_representation.py
+  tools/analyze_pose_invariance.py
+  tools/measure_feature_displacement.py    the section-6 perturbation numbers
+================================================================================
+
+
+================================================================================
+8. THE SAME QUESTION ON THE REAL JACO   (tools/analyze_jaco_representation.py)
+================================================================================
+  Everything above is synthetic. The obvious follow-up is whether it holds on real
+  robot images, and the answer turns out to be YES -- but only once a confound is
+  removed, and the confound reverses the naive reading completely.
+
+  SETUP. visual_robust_new_barx_ur5e renders the SAME 108 episodes from six NAMED
+  embodiments, and observation.state is shared across all six. So one row is one EEF
+  state seen on six different arms, which is exactly the comparison. 48 states,
+  4 per episode, 288 frames.
+      non-Jaco: PandaOmron, IIWAOmron, UR5eOmron, PandaOmronPandaGripper
+      Jaco:     JacoOmron, JacoOmronPandaGripper
+
+8.1 THE HEADLINE NUMBERS, AND WHY THEY MISLEAD ON THEIR OWN
+                                        contrastive       stock
+    same state, non-Jaco x non-Jaco       +0.501         +0.525
+    same state, non-Jaco x JACO           +0.492         +0.480
+    same state, JACO x JACO               +0.485         +0.765
+    DIFFERENT state, same embodiment      +0.018         +0.060
+    Jaco -> nearest non-Jaco, top-1        0.406          0.729
+    median EEF error                      19.7 cm         0.0 cm
+
+  Read alone, this says the STOCK tower is better on real images -- 0.729 retrieval
+  against 0.406. That reading is wrong.
+
+8.2 THE CONFOUND, AND THE CONTROL THAT EXPOSES IT
+  Two renders of the same row share the ENTIRE scene: same kitchen, same object
+  positions, same lighting, same instant. Only the arm differs. A tower that matches
+  on SCENE rather than on pose scores perfectly on that without ever looking at the
+  robot.
+
+  The control is pairs from the SAME episode at DIFFERENT times. The scene is nearly
+  identical and only the arm has moved -- a comparison background cannot win.
+
+                                same state   same scene,      DIFFERENCE
+                                             different pose   (= pose discrimination)
+    contrastive                   +0.495        +0.004           +0.491
+    stock SigLIP                  +0.517        +0.296           +0.221
+
+  There it is. The contrastive tower scores +0.004 when the scene is held and only
+  the arm moves -- it gets essentially NOTHING from the background, so its +0.495 is
+  entirely about the end-effector state. Stock scores +0.296 on the same control, so
+  more than half of its apparent similarity is the kitchen.
+
+  On pose discrimination proper, the contrastive tower beats stock by 0.491 to 0.221
+  -- better than 2x. Stock's higher retrieval number is a shortcut: it recognises
+  WHICH MOMENT of the episode it is looking at, which happens to identify the row,
+  and would not survive a change of scene.
+
+8.3 AND JACO SPECIFICALLY
+    contrastive:  non-Jaco x non-Jaco +0.501   vs   non-Jaco x JACO +0.492
+                  -> being Jaco costs 0.009
+    stock:        +0.525 vs +0.480  -> costs 0.045
+
+  0.009 is the same price held-out embodiments paid in the synthetic test (section
+  1: +0.979 vs +0.974, a cost of 0.005). The property transfers to a real arm.
+
+8.4 HOW THIS SQUARES WITH THE 102% IN SECTION 6
+  Section 6 said a real RoboCasa frame sits 102% of the way from a synthetic frame
+  to an unrelated image, which sounds like it should rule this out. It does not, and
+  the distinction is worth being precise about:
+
+    * ACROSS domains the features are far apart. A real frame does not land near
+      any synthetic frame. That is the 102%.
+    * WITHIN the real domain the features still order themselves by EEF state. That
+      is section 8.
+
+  Both are true. The tower has not learned a shared synthetic/real coordinate
+  system, but the structure it learned -- separate pose, ignore appearance -- still
+  operates on real images. For the dual-tower policy experiment that is better news
+  than section 6 alone suggested: the frozen tower is not noise on policy frames, it
+  is a pose-sensitive, scene-insensitive signal in a part of the space the policy's
+  own encoder does not occupy.
+
+  It does NOT explain away the 9.6 result (frozen 0.0388 vs stock 0.0387). Whether
+  the policy can USE this signal is still open, and D_freeze_c_drop is still the run
+  that settles it.
+
+  FILE  outputs/jaco_representation.json

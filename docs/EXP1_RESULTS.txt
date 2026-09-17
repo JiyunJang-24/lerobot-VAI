@@ -1,0 +1,372 @@
+================================================================================
+EXPERIMENT 1 -- SELECTIVE VISUAL ALIGNMENT: RESULTS
+selfws_v2/kitchen, 24/8 scene split, arm-level embodiment holdout
+Run 2026-09-13. Plan in outputs/EXP1_PLAN.txt
+================================================================================
+
+VERDICT: GO -- but only for D and E. Alignment ALONE (B, C) fails condition 2.
+
+  The three go/no-go conditions were: retrieval improves, EEF survives, scene
+  and object survive. Global contrastive alignment passes the first and FAILS
+  the second -- it makes metric EEF information WORSE than the untrained
+  backbone. That is the failure mode the research note anticipated, and it
+  showed up exactly where it was predicted to.
+
+  Adding the EEF preservation term fixes it. Adding the scene anchor on top
+  recovers scene fidelity at some cost to pose discrimination.
+
+
+================================================================================
+1. THE TABLE
+================================================================================
+  Retrieval is WITHIN SCENE: gallery = same kitchen, different embodiment,
+  6 states >= 5 cm apart. Chance R@1 = 5/30 = 0.167.
+  EEF / probes reported on unseen_scene x unseen_emb unless stated.
+
+  method                   seen    unseenSc  unseenEmb  unseen  | EEF    EEF   | emb   scene  scene | pose
+                           /seen   /seenEmb  /seenSc    /unseen | cm     deg   | probe 8-way  24-way| disc
+  ------------------------ ------  --------  ---------  ------- | -----  ----- | ----- -----  ------ ------
+  A frozen                 0.611   0.597     0.550      0.663   | 24.06  100.4 | 0.689 0.986  0.838 | -0.031
+  B global contrastive     0.991   0.875     0.685      0.797   | 27.35  118.2 | 0.257 0.946  0.635 | +0.473
+  C selective (robot mask) 0.992   0.896     0.727      0.841   | 24.25   82.6 | 0.378 0.946  0.622 | +0.510
+  D selective + EEF        0.992   0.878     0.730      0.752   | 13.85   20.6 | 0.365 0.986  0.784 | +0.328
+  E selective + EEF + anch 0.992   0.865     0.776      0.797   | 19.69   28.6 | 0.662 0.986  0.770 | +0.145
+
+  chance / reference       0.167   0.167     0.167      0.167   |              | 0.167              |
+  gallery states               144      48        119       41
+  median state separation    31.1cm  30.8cm    26.5cm   20.2cm
+
+  LIBERO cross-domain (object-pose R^2, median over dims; and LIBERO retrieval):
+  A +0.634 / R@5 0.091    B +0.802 / 0.112    C +0.818 / 0.132
+  D +0.811 / 0.137        E +0.669 / 0.159
+
+
+================================================================================
+2. THE THREE CONDITIONS, ONE AT A TIME
+================================================================================
+
+2.1 DOES CROSS-EMBODIMENT RETRIEVAL IMPROVE?   YES, for every trained method.
+
+  The best-powered held-out-embodiment cell is seen_scene/unseen_emb (119
+  states, 714 queries, s.e. ~0.041):
+
+      A 0.550  ->  B 0.685  C 0.727  D 0.730  E 0.776
+
+  E beats the frozen backbone by 5.5 standard errors. Selective (C) beats
+  global (B) by 1.0 s.e. -- the right sign, not yet decisive.
+
+  On the headline unseen x unseen cell everything improves too (0.663 -> 0.75
+  to 0.84) but there are only 41 states, s.e. ~0.062, so the ordering AMONG
+  the trained methods there is noise. C's 0.841 and D's 0.752 are 1.4 s.e.
+  apart. Do not read that cell as "C is best".
+
+2.2 IS EEF STATE PRESERVED?   ONLY WITH THE EXPLICIT TERM. This is the result.
+
+      frozen           24.06 cm   100.4 deg
+      B global         27.35 cm   118.2 deg     <-- WORSE than doing nothing
+      C selective      24.25 cm    82.6 deg     <-- a wash on translation
+      D +EEF           13.85 cm    20.6 deg     <-- 1.7x / 4.9x better
+      E +EEF+anchor    19.69 cm    28.6 deg
+
+  Global contrastive alignment buys its retrieval by discarding metric pose.
+  It can tell WHICH of six states it is looking at (0.797 R@1) while having
+  LESS linearly decodable information about where the gripper actually is than
+  an untrained SigLIP. Retrieval and state preservation are genuinely
+  different objectives and one does not imply the other.
+
+  Masking the robot region (C) recovers rotation (100 -> 83 deg) but not
+  translation. Only the explicit head does both.
+
+  CAVEAT, stated plainly: D and E are the only methods that received EEF
+  supervision, so this comparison is not information-matched. What it
+  establishes is that the term is NECESSARY, not that those methods are
+  cleverer. B and C had every opportunity to keep the information and did not.
+
+2.3 IS SCENE / OBJECT INFORMATION DESTROYED?   No, but B and C do dent it.
+
+  8-way scene probe (held-out kitchens, ~30 items/class, well conditioned):
+      A 0.986   B 0.946   C 0.946   D 0.986   E 0.986
+  24-way scene probe (~10 items/class, thin but directionally clear):
+      A 0.838   B 0.635   C 0.622   D 0.784   E 0.770
+
+  So alignment alone costs about 0.21 of 24-way scene accuracy and the
+  EEF/anchor terms recover most of it. Nothing collapses.
+
+  Object state, measured on LIBERO because selfws has no object label that is
+  not 1:1 with the scene: every trained method is ABOVE the frozen backbone
+  (+0.634 -> +0.67 to +0.82 median R^2). Object information is not merely
+  preserved, it improves. This is a cross-domain probe -- the encoders were
+  trained on RoboCasa kitchens -- so all methods pay the same domain cost and
+  only the comparison between them is meaningful.
+
+
+================================================================================
+3. TWO THINGS WORTH UNDERSTANDING
+================================================================================
+
+3.1 THE FROZEN BASELINE RETRIEVES AT 0.663 WITH NEGATIVE POSE DISCRIMINATION
+
+  -0.031 means same-state-different-robot pairs are, on average, LESS similar
+  than different-state-same-scene pairs. Yet it retrieves at 4x chance. Both
+  are true because retrieval takes an argmax, not a mean: the frozen tower's
+  embodiment probe is 0.689, so inside a scene its nearest neighbours are the
+  other renders of the SAME ARM FAMILY -- three of the six candidates are Jaco
+  -- and among those the same state happens to be closest. It is matching
+  appearance within arm family, not pose.
+
+  Every trained method flips pose discrimination positive (+0.15 to +0.51).
+  That flip, not the retrieval number, is the evidence that the mechanism
+  changed.
+
+3.2 WHAT E'S ANCHOR ACTUALLY TRADES
+
+  E has the best held-out-embodiment retrieval (0.776), full scene fidelity
+  (0.986), and the LOWEST pose discrimination of the trained methods (+0.145)
+  together with the HIGHEST embodiment probe (0.662, against C's 0.378). The
+  anchor holds the encoder near the frozen teacher outside the robot mask, and
+  the frozen teacher carries embodiment identity -- so E keeps more of what it
+  was told not to move. Whether that is a feature or a leak depends on what the
+  policy needs; it is not free.
+
+
+================================================================================
+4. WHAT THIS DOES NOT ESTABLISH
+================================================================================
+  * ONE SEED. No method-to-method difference below ~0.05 R@1 should be trusted.
+  * 41 states in the headline unseen x unseen cell. The ranking among trained
+    methods there is not resolvable; only the gap to frozen is.
+  * The held-out arms are Jaco and VX300SMobile. VX300SMobile reaches only 20-34%
+    of states, so the held-out groups are drawn from a more compact workspace
+    (20.2 cm median separation against 31.1 cm). Matched as far as the data
+    allows, not perfectly.
+  * Nothing here says a policy can USE this. That is the next experiment, and
+    the prior evidence is not encouraging: a frozen contrastive tower matched a
+    stock one exactly in the dual-tower DP runs (0.0388 vs 0.0387).
+  * The counterfactual is exact for the EEF (cross-embodiment std 1.6 mm) and
+    approximate for objects, which diverge after contact because each arm's
+    contact dynamics differ.
+
+
+================================================================================
+5. THREE MEASUREMENT ARTIFACTS THAT WERE FIXED, AND WHY THEY MATTER
+================================================================================
+  Each of these produced a plausible table that was wrong. Recording them
+  because the same traps apply to any follow-up.
+
+  (1) UNEQUAL GALLERIES. 24 train scenes against 8 held-out, 20 train
+      embodiments against 10, so held-out galleries were a third the size and
+      held-out groups scored HIGHER: frozen 0.733 on unseen/unseen against
+      0.618 on seen/seen. Fixed by equalising states and embodiments per group.
+
+  (2) UNEQUAL STATE SPACING. Held-out-embodiment groups can only use states
+      VX300SMobile reaches, which cluster: the frozen baseline's misses landed
+      4.1 cm away there against 20 cm in the seen groups. It was answering an
+      easier question. Fixed with a 5 cm minimum EEF separation within a scene.
+
+  (3) THE SCENE SHORTCUT. Across scenes, recognising the kitchen narrows the
+      gallery to the two states that kitchen contributed, and the rest is a coin
+      flip -- which is how the frozen tower scored 0.830 with NEGATIVE pose
+      discrimination. Retrieval is now within-scene, where every candidate
+      shares the background and the shortcut pays nothing.
+
+  Also: the LIBERO object probe first returned R^2 = -2853. That was 768
+  features regressed on 28 rows with near-zero-variance target dimensions
+  exploding the denominator, not a finding. Now 240 rows per shard, dead
+  dimensions dropped, ridge alpha chosen on held-out training rows, median over
+  dimensions instead of mean.
+
+
+================================================================================
+6. RECOMMENDATION
+================================================================================
+  Proceed, with D as the default and E as the variant to keep. Before any
+  policy integration, two cheap things worth doing first:
+
+  1. A SECOND SEED and a SECOND ARM-HOLDOUT SPLIT (hold out Panda + IIWA
+     instead of Jaco + VX300SMobile). The current headline cell is too small
+     to separate C, D and E, and the held-out arms are the two least typical.
+
+  2. POINT tools/analyze_jaco_representation.py AT THE D CHECKPOINT. It already
+     measures exactly this property on REAL policy data with a scene control,
+     and it takes minutes. If D's advantage survives there, the policy
+     experiment is worth its cost; if it does not, the 102% cross-domain gap is
+     still the binding constraint and no amount of alignment on synthetic
+     renders will fix it.
+
+
+================================================================================
+FILES
+================================================================================
+  outputs/exp1/split.json                      the deterministic split
+  outputs/exp1/{A..E}/vision_tower.safetensors checkpoints
+  outputs/exp1/{A..E}/metrics.json             full per-group metrics
+  outputs/exp1/{A..E}/config.json              exact run configuration
+  outputs/exp1/{A..E}/history.json             training curves
+  outputs/exp1/results_table.txt               the table above
+  outputs/exp1/libero_probe.json               object-state probe
+  outputs/exp1/neighbours_unseen_scene_unseen_emb.png
+  /dataset/jiyun/exp1_cache/selfws_{kitchen,no_kitchen}/   frame + mask cache
+
+
+================================================================================
+7. THE TRANSFER CHECK, RUN IMMEDIATELY   (tools/analyze_jaco_representation.py)
+================================================================================
+  Section 6 recommended pointing the real-Jaco analysis at the D checkpoint before
+  spending anything on policy integration. It cost minutes, so it was run on every
+  checkpoint at matched settings (40 states, 4 per episode).
+
+  Corpus: visual_robust_new_barx_ur5e -- REAL policy data, 108 RoboCasa episodes
+  rendered from 6 named embodiments with a shared observation.state. Two are Jaco.
+  Nothing here was trained on it.
+
+  tower                    same     same scene   POSE      Jaco->non-Jaco   top-1
+                           state    diff state   DISC      retrieval R@1    EEF err
+  -----------------------  -------  ----------   -------   --------------   -------
+  stock SigLIP             +0.548     +0.369     +0.179        0.625          0.0 cm
+  old eef_pairs tower      +0.475     -0.010     +0.485        0.375         27.4 cm
+  B global                 +0.783     -0.039     +0.822        0.588          0.0 cm
+  C selective              +0.838     -0.056     +0.893        0.487          3.8 cm
+  D selective + EEF        +0.872     +0.045     +0.827        0.838          0.0 cm
+  E sel + EEF + anchor     +0.805     +0.154     +0.651        0.800          0.0 cm
+
+7.1 POSE DISCRIMINATION AND RETRIEVAL COME APART, AND THE SPLIT IS INFORMATIVE
+
+  C has the HIGHEST pose discrimination of anything measured (+0.893) and nearly
+  the WORST retrieval of the trained methods (0.487). D has slightly lower
+  discrimination (+0.827) and the best retrieval by a wide margin (0.838).
+
+  The two metrics ask different questions. Pose discrimination is a MEAN over
+  pairs: does same-state sit above same-scene-different-state on average? C
+  answers yes emphatically. Retrieval is an ARGMAX: among 240 candidates, is the
+  exact matching state the single closest? For that, similarity has to be ordered
+  finely enough to separate nearby poses -- and C's linear EEF probe was 24.2 cm,
+  no better than an untrained backbone. It knows this frame is a different pose
+  from that one without knowing which pose either is, so nearby states blur and
+  the argmax lands on the wrong one.
+
+  This is the SAME finding as section 2.2, showing up independently on real images
+  through a different metric. The EEF preservation term is what converts alignment
+  into usable retrieval.
+
+  The old eef_pairs tower fails the same way and worse: +0.485 discrimination,
+  0.375 retrieval, and its top-1 miss is 27.4 cm off. It separates poses without
+  being able to find them.
+
+7.2 D BEATS EVERYTHING PREVIOUSLY BUILT, ON REAL FRAMES
+
+  Against the stock tower: 4.6x the pose discrimination (+0.827 vs +0.179) AND
+  better retrieval (0.838 vs 0.625). Against the old eef_pairs tower: 1.7x the
+  discrimination and 2.2x the retrieval.
+
+  The old tower could not beat stock on retrieval at all -- 0.375 against 0.625 --
+  because stock wins that by scene matching (its same-scene-different-state score
+  is +0.369, so more than half of its apparent similarity is the kitchen). D wins
+  on both while taking almost nothing from the background (+0.045).
+
+  Being Jaco costs D 0.065 of similarity, against 0.172 for B and 0.131 for C.
+  The method with the state term also generalises best to the unfamiliar arm.
+
+7.3 WHAT CHANGED VERSUS THE OLD TOWER
+
+  Same objective family, same backbone, same batch shape. Two differences:
+    * the training corpus has a SCENE AXIS (32 distinct kitchens against a flat
+      coloured checkerboard floor), and objects in the frame
+    * an explicit EEF preservation term
+
+  Section 2.2 shows the second one is doing most of the work on state metrics, and
+  7.1 shows it is what makes retrieval work. The first is what makes any of it
+  transfer to a real kitchen at all.
+
+
+================================================================================
+8. REPLICATION ON A SECOND ARM HOLDOUT
+================================================================================
+  Same 24/8 kitchen split, but Panda and IIWA held out instead of Jaco and
+  VX300SMobile. This is the harsher test of the headline claim, because Panda and
+  IIWA are TYPICAL arms -- the frozen backbone already handles them well
+  (36.7 deg rotation error against 100.4 deg on split 1), so there is much less
+  room to improve and the EEF comparison is far less forgiving.
+
+  run     seen   unseenSc  unseenArm  uns/uns | EEF cm  EEF deg | emb   sc-24 | pose
+  ------  -----  --------  ---------  ------- | ------  ------- | ----- ----- | -----
+  A       0.456    0.469     0.801     0.799  | 23.09    36.7   | 0.718 0.910 | +0.230
+  B       0.968    0.891     0.971     0.958  | 28.80    72.4   | 0.308 0.795 | +0.880
+  C       0.957    0.922     0.973     0.965  | 24.45    61.5   | 0.167 0.846 | +0.907
+  D       0.975    0.857     0.969     0.944  | 16.72    27.0   | 0.321 0.949 | +0.829
+  E       0.977    0.880     0.965     0.972  | 20.14    40.1   | 0.513 0.923 | +0.712
+
+  THE HEADLINE FINDING REPLICATES, and more sharply:
+      * B is WORSE than the frozen backbone on BOTH EEF axes again -- 28.8 cm vs
+        23.1, and 72.4 deg vs 36.7. Alignment alone degrading state information is
+        not a split-1 accident.
+      * C is worse than frozen on rotation too here (61.5 vs 36.7). On split 1 it
+        looked like masking recovered rotation; against an easier frozen baseline
+        it does not. Masking alone is not sufficient.
+      * D is the only method better than frozen on BOTH axes in BOTH splits.
+      * The 24-way scene probe repeats its pattern exactly: B dents it most
+        (0.910 -> 0.795), C partly (0.846), D and E exceed the frozen backbone
+        (0.949, 0.923).
+      * C's embodiment probe hits 0.167 -- exactly chance. Masked alignment is the
+        most effective at removing identity, and it is still the wrong trade.
+
+  Retrieval saturates on this split (all trained methods 0.94-0.97 on
+  unseen x unseen) because the held-out arms are ordinary. Read the EEF and scene
+  columns here, not the retrieval ones.
+
+  NOTE ON CROSS-SPLIT READING: group difficulty depends on WHICH arms land in
+  which group, so numbers are not comparable between split 1 and split 2 -- on
+  split 2 the "seen embodiment" groups contain Jaco and VX300SMobile, which is why
+  the frozen baseline scores 0.456 there and 0.799 on the held-out side. Only
+  method-to-method comparisons WITHIN a split mean anything.
+
+
+================================================================================
+9. SEED REPLICATION, AND WHAT IT REVISES
+================================================================================
+  C, D and E re-run on the original split with seed 1.
+
+  run        seen  unsSc  unsArm   u/u | EEF cm  EEF deg | emb   sc-24 | pose
+  --------  -----  -----  ------  ----- | ------  ------- | ----- ----- | ------
+  A         0.611  0.597   0.550  0.663 | 24.06   100.4   | 0.689 0.838 | -0.031
+  C  seed0  0.992  0.896   0.727  0.841 | 24.25    82.6   | 0.378 0.622 | +0.510
+  C  seed1  0.993  0.906   0.755  0.837 | 20.83    48.0   | 0.500 0.662 | +0.509
+  D  seed0  0.992  0.878   0.730  0.752 | 13.85    20.6   | 0.365 0.784 | +0.328
+  D  seed1  0.988  0.906   0.732  0.785 | 16.31    20.8   | 0.527 0.743 | +0.319
+  E  seed0  0.992  0.865   0.776  0.797 | 19.69    28.6   | 0.662 0.770 | +0.145
+  E  seed1  0.986  0.920   0.737  0.752 | 16.93    27.2   | 0.784 0.811 | +0.124
+
+9.1 WHAT SURVIVES
+  Retrieval is stable to within 0.04, confirming the earlier warning not to trust
+  differences below ~0.05. Pose discrimination is stable to within 0.02 -- C
+  +0.510/+0.509, D +0.328/+0.319, E +0.145/+0.124 -- so the ordering there is
+  real. D's rotation error is 20.6 and 20.8 deg, essentially identical.
+
+9.2 WHAT DOES NOT, AND THE CLAIM IT WEAKENS
+  C's ROTATION ERROR SWINGS 82.6 -> 48.0 deg BETWEEN SEEDS. That 35 deg spread is
+  larger than the entire C-to-D gap measured on seed 0 alone. The direction holds
+  in both seeds (D beats C: 20.6 < 82.6, and 20.8 < 48.0), but "C is at 83 deg"
+  was over-precise and should be read as "C is somewhere between 50 and 85 deg,
+  and unstable".
+
+  Means over the two seeds:
+      A  24.06 cm / 100.4 deg     C  22.54 cm / 65.3 deg
+      D  15.08 cm /  20.7 deg     E  18.31 cm / 27.9 deg
+  So C barely improves translation over doing nothing (22.5 vs 24.1) and D is
+  1.6x better on translation and 4.9x on rotation.
+
+  B WAS RUN AT ONE SEED ONLY on this split. Given C's variance, "B at 118 deg is
+  worse than frozen at 100 deg" cannot rest on that alone. It rests instead on the
+  SECOND SPLIT, where B is worse than frozen on both axes by a wide margin
+  (28.80 vs 23.09 cm, 72.4 vs 36.7 deg). Two independent splits, same direction,
+  both axes. That is the evidence for the headline claim; the single-seed split-1
+  number is corroboration, not proof.
+
+9.3 THE REVISED SUMMARY
+  Retrieval improves for EVERY alignment method and does NOT distinguish them:
+  across seeds, C 0.741, D 0.731, E 0.757 on the held-out-arm cell, all within
+  noise of each other and all far above frozen's 0.550.
+
+  What distinguishes the methods is state and scene preservation, and there only
+  the explicit term matters. If the goal were retrieval alone, plain global
+  contrastive alignment would be enough. It is not enough for anything that needs
+  to know where the gripper is.

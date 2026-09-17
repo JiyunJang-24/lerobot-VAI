@@ -1,0 +1,112 @@
+DEFECT REPORT — visual_robust_new_segmentation
+Segmentation videos are silently truncated at generation time
+Found 2026-09-16 while building a contrastive corpus from this dataset.
+================================================================================
+
+SUMMARY
+
+  In this dataset every frame is rendered from three embodiments, and each
+  (embodiment, camera) pair ships an RGB video plus a segmentation video.
+
+  The RGB videos are always complete. The SEGMENTATION videos are frequently
+  SHORTER than the episode they belong to -- about 21-23% of them. Nothing
+  reports this: every worker log ends with "DONE ... queue empty, exiting", so
+  the generator believes it finished cleanly.
+
+  This is NOT a transfer problem. The SCP was verified independently (file
+  counts and a per-file path/size manifest match source and destination), and
+  the pattern rules it out anyway: a transfer fault would truncate RGB and
+  segmentation alike, and RGB is never short.
+
+
+LOCATION
+  /dataset/jiyun/dataset_git/visual_robust_new_segmentation/
+      <TREE>/videos/chunk-000/<Embodiment>.<camera>_segmentation/episode_NNNNNN.mp4
+
+  TREE in { IIWAOmron_PnPCounterToSink,
+            PandaOmron_TurnOnSinkFaucet,
+            UR5eOmron_PnPSinkToCounter }
+  Embodiment in { IIWAOmron, PandaOmron, UR5eOmron }
+  camera = robot0_agentview_right   (the wrist stream was not audited)
+
+
+SCALE  (front camera, 108 episodes x 3 embodiments = 324 pairs per tree)
+
+  tree                          short pairs      episodes usable
+                                                 (all 3 embodiments complete)
+  IIWAOmron_PnPCounterToSink      75/324 (23%)        83/108
+  PandaOmron_TurnOnSinkFaucet     69/324 (21%)        85/108
+  UR5eOmron_PnPSinkToCounter      69/324 (21%)        85/108
+
+
+EXAMPLES  (need = episode length from the matching v3.0 export)
+
+  IIWAOmron_PnPCounterToSink  ep  9  IIWAOmron  need=433  rgb=433  seg=357
+  IIWAOmron_PnPCounterToSink  ep 85  IIWAOmron  need=430  rgb=430  seg=304
+  PandaOmron_TurnOnSinkFaucet ep 71  IIWAOmron  need=376  rgb=376  seg=250
+  PandaOmron_TurnOnSinkFaucet ep 76  IIWAOmron  need=418  rgb=418  seg=313
+  UR5eOmron_PnPSinkToCounter  ep 80  IIWAOmron  need=645  rgb=645  seg=461
+  UR5eOmron_PnPSinkToCounter  ep 73  IIWAOmron  need=681  rgb=681  seg=507
+
+  Shortfalls range from a few frames to ~180. Always a truncated TAIL: the
+  segmentation stops early, it does not drop frames from the middle.
+
+
+THE PATTERN THAT POINTS AT THE CAUSE
+
+  Affected episode indices cluster at 7-10 and at 66+, and work was dispatched
+  in 27-episode chunks -- the log directory contains files named
+
+      <TREE>_0_27.log   <TREE>_27_54.log   <TREE>_54_81.log   <TREE>_81_108.log
+
+  So the truncation concentrates at the END of chunk ranges. That is consistent
+  with the segmentation writer being closed/flushed before it has drained, or
+  with the worker advancing to the next episode while the segmentation encoder
+  still has buffered frames.
+
+  Most likely culprits, in order:
+    1. The segmentation video encoder is not flushed on close. With PyAV this is
+       the classic `container.mux(stream.encode())` (flush with no argument)
+       being skipped before `container.close()`; libx264 holds frames in its
+       lookahead buffer and they are lost. The RGB writer is presumably flushed
+       correctly, or uses a different path, which is why only segmentation is
+       affected.
+    2. A per-episode timeout or early `break` in the segmentation render loop
+       that is not checked afterwards.
+    3. Writer objects going out of scope and being garbage-collected mid-write
+       at chunk boundaries.
+
+  Hypothesis 1 explains everything observed: RGB unaffected, segmentation always
+  short by a tail, worse at chunk ends, and no error reported anywhere.
+
+
+WHAT TO FIX
+
+  1. Flush the segmentation encoder before closing it, exactly as the RGB writer
+     does. In PyAV:
+         container.mux(stream.encode())   # <-- no argument: drains the encoder
+         container.close()
+  2. ASSERT AFTER WRITING. Re-open each written segmentation video and check its
+     frame count equals the episode length; fail loudly if not. The absence of
+     this check is why 21-23% of the corpus shipped broken with clean logs.
+  3. Regenerate the segmentation videos for the affected episodes. RGB does not
+     need regenerating -- it is intact.
+
+  A useful acceptance test, which is also how this was found:
+
+      for every (tree, embodiment, camera) and every episode:
+          frames(<...>_segmentation/episode_NNNNNN.mp4) == episode_length
+          frames(<...>/episode_NNNNNN.mp4)              == episode_length
+
+  Both must hold for all 324 pairs per tree before the dataset is considered
+  done. Do not rely on worker exit status; it is currently clean while the data
+  is not.
+
+
+NOTE ON THE OTHER DATASET
+
+  barx3_segmentation was produced by what appears to be the same pipeline (same
+  worker.sh / queue.tsv / logs_worker_gpuN.log layout). Its first 100 episodes
+  per tree are verified intact -- a build over exactly that range completed with
+  a hard length assertion and did not trip. Episodes beyond 100 are being
+  audited separately; see outputs/BARX3_SEG_AUDIT.txt.

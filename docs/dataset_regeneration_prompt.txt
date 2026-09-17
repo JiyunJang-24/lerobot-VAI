@@ -1,0 +1,219 @@
+================================================================================
+PASTE EVERYTHING BELOW THIS LINE TO THE CLAUDE THAT RENDERS THE DATASET
+================================================================================
+
+Please re-render the `eef_pairs` synthetic embodiment dataset to a new design. The
+current version works for its original purpose but fails, in a specific and measured
+way, when what it teaches has to transfer to real robot images. Every request below
+carries the measurement that motivated it, so you can judge trade-offs yourself rather
+than following instructions blindly. Please tell me what you can and cannot do, and
+flag anything that conflicts with how your renderer works, BEFORE you start rendering.
+
+WHAT THE DATA IS FOR
+  A model sees two images of a robot arm and must say how the end-effector moved
+  between them: Cartesian translation, rotation, and gripper. It trains on many
+  synthetic embodiments and must generalise to (a) morphologies it never saw and (b)
+  real robot trajectories in real kitchens. (a) already works -- 0.67 cm error on
+  held-out embodiments against a 4.66 cm predict-the-mean baseline. (b) is what this
+  redesign is for.
+
+================================================================================
+THE CORE IDEA: HOLD EVERYTHING FIXED EXCEPT THE ROBOT'S MOTION
+================================================================================
+Fix the camera, the lighting, and the scene. Then vary ONLY:
+    - the end-effector pose (many samples)
+    - the gripper state
+    - which embodiment is rendered
+
+The visual difference between two frames is then PURELY the robot's motion, with no
+nuisance variation to explain away. Three measurements say this is the right trade:
+
+1. The nuisance axes were never doing much work. Perturbing an image and measuring how
+   far its features move, as a fraction of the distance a real pose change produces:
+       different background ...  1%       shift the image 40 px ....  31%
+       furniture recolour .....  2%       zoom out to 0.75x .......  41%
+       A DIFFERENT ROBOT ......  4%       a real kitchen frame .... 102%
+   Background and furniture cost almost nothing to drop. The 31-41% axis is camera
+   geometry, and fixing the camera is what removes it.
+
+2. The current 4 camera views are not interchangeable. Over 600 pose pairs on a fixed
+   robot, the SAME 3-D displacement produces pixel displacements whose magnitude varies
+   by a median factor of 1.6 across views, up to 7x in individual cases -- a 0.20 m
+   motion moves the gripper 6 px in one view and 43 px in another. With a world-frame
+   label the model must first work out which view it is in. Four is few enough to
+   memorise, and that is measurably what happened.
+
+3. THE BUDGET. Today: 893,270 frames = 111 renders for every (pose, embodiment) pair,
+   spent on 12 background/view combinations x 3 colour variants x 2 gripper x 2
+   furniture. Under the fixed design only the 2 gripper states remain, so the SAME
+   total render count buys 55x more poses: 144 -> about 8,000. Since motion pairs grow
+   roughly with the square of the pose count, the motion-vocabulary limit effectively
+   disappears. That is by far the best use of the budget: pose diversity is the axis
+   the task is actually about.
+
+--------------------------------------------------------------------------------
+1. CAMERA -- MATCH THE DEPLOYMENT CAMERA EXACTLY
+--------------------------------------------------------------------------------
+Use the same camera as the target domain: RoboCasa `robot0_agentview_right`, the
+robot-base-mounted view used by the real trajectories (the Jaco / Panda / IIWA / UR5e
+renders in visual_robust_new_barx_ur5e). Same pose, same intrinsics, same resolution.
+
+Rationale: this removes the domain gap instead of asking the model to bridge it. The
+current 4 views are arbitrary and match nothing, which is the worst of both worlds -- a
+head trained on them locates the gripper to 3-5 px on robots it has NEVER seen, and
+collapses to near chance on real images from a fifth camera.
+
+  * the camera must be IDENTICAL between the two frames of a pair. If it moves, camera
+    motion and robot motion mix in the image and the label stops being recoverable at
+    all. This holds regardless of anything else.
+  * please still export camera extrinsics and intrinsics as columns. The current export
+    has none, which is why the gripper's pixel position could not be recomputed later
+    and the whole dataset had to be re-exported just to add it. Exporting them also
+    lets us move to a varied-camera design later without re-rendering.
+  * ALSO NOTE: today `background_index` is not independent of the camera --
+    bg mod 4 == view exactly -- so "12 backgrounds" is really 4 views x 3 backdrops.
+    If you keep any background variation at all, make it a genuinely separate axis.
+
+--------------------------------------------------------------------------------
+2. LIGHTING AND SCENE -- ONE OF EACH, AND MAKE IT THE DEPLOYMENT SCENE
+--------------------------------------------------------------------------------
+One lighting setup, one scene. Going further than "empty room": if you can, make that
+one scene resemble the target -- a RoboCasa kitchen with a sink and objects on the
+counter, rather than a robot on a checkerboard floor.
+
+Measurement: a real kitchen frame sits 102% of the way from a synthetic frame to a
+completely unrelated image -- fully decorrelated. Camera and scene content are the two
+axes on which the domains actually differ, and fixing the camera addresses only one.
+
+If matching the kitchen is too costly, one fixed simple scene is still fine and is a
+clear improvement on the current design. Say which you chose.
+
+--------------------------------------------------------------------------------
+3. SAMPLE MOTION PAIRS, NOT A POSE GRID  (spend the freed budget here)
+--------------------------------------------------------------------------------
+The current poses were sampled to COVER the reachable workspace, so pairing them gives
+motions unlike any real trajectory segment. Even restricting to pairs closer than
+0.15 m, the mean rotation between them is 48 degrees; a real trajectory covering the
+same 0.09 m rotates about 6.5.
+
+It shows up directly in the labels. Bucketing motions into "slightly / moderately /
+far" by quantile:
+    translation   synthetic 0.028 / 0.073 / 0.110 m    real 0.026 / 0.072 / 0.107 m
+                  -> agree to 7%. "move forward moderately" means the same thing.
+    rotation      synthetic 9.7 / 29.2 / 63.8 deg      real 1.0 / 3.9 / 8.8 deg
+                  -> 7x apart. The same words mean different physical rotations.
+
+PLEASE DO
+  * for each sample: pick a reachable state s_t, sample a LOCAL delta_eef, compute
+    s_t+h, render both frames. Pairs, not a grid.
+  * aim for the bulk of the distribution around |translation| ~ 0.10 m and rotation
+    ~5-10 degrees, with a tail of larger motions rather than centring on them.
+  * store both states AND the delta in the row.
+  * CRITICAL -- draw the set of pose pairs ONCE, then render EVERY embodiment at that
+    same set. Do not sample fresh motions per robot. This is the single most valuable
+    property of the current dataset: because every embodiment is posed identically,
+    knowing which robot you are looking at tells you nothing about the label, so the
+    model cannot cheat by recognising the robot. It must survive the redesign.
+
+--------------------------------------------------------------------------------
+4. ROTATION -- IT DOES NOT CURRENTLY WORK. FIX IT OR DOCUMENT IT.
+--------------------------------------------------------------------------------
+Frames are 180x320 and the gripper spans about 20 px, so a 5-degree rotation moves the
+gripper's extremities by 0.87 px. A vision transformer patch covers 10 px of the
+original frame, so a realistic rotation changes the image by roughly ONE ELEVENTH OF
+ONE PATCH. It is below the resolution at which the model can see anything.
+
+Measured relative error (prediction error / actual rotation):
+    synthetic, ~60 degree rotations ....  24%   learned
+    real,      ~6.5 degree rotations ...  95%   not learned -- and in 6 runs out of 6
+                                                it was WORSE than predicting no
+                                                rotation at all
+On top of that, half the real rotation is not signal: over 25 frames the gripper
+travels 12.3 degrees of path but ends only 6.5 degrees from where it started (ratio
+0.53). Translation's equivalent ratio is 0.88.
+
+PLEASE DO at least one of:
+  a) render at higher resolution -- 512x512 native beats upsampling 180x320. This is
+     the cheapest real fix and it also helps the gripper-state and fine-position
+     signals.
+  b) add a wrist camera, where the gripper fills the frame.
+  c) if neither is possible, still ship the rotation labels, but WRITE THE LIMITATION
+     INTO THE DATASET CARD in plain terms, e.g.:
+
+         "Rotation labels: at 180x320 with the gripper spanning ~20 px, a 5-degree
+          rotation displaces the gripper's extremities by <1 px, which is below one
+          model patch. Rotation is therefore not reliably learnable from these images
+          at realistic magnitudes. Translation and gripper labels are unaffected.
+          Use rotation supervision only if rendering at higher resolution."
+
+     Please include this note regardless of which option you pick, adjusted to match
+     whatever resolution you end up using -- downstream users need to know.
+
+--------------------------------------------------------------------------------
+5. SCHEMA -- FACTORS IN COLUMNS, NOT IN DIRECTORY NAMES
+--------------------------------------------------------------------------------
+Today the gripper state is encoded by WHICH SUBSET a frame lives in (`_closed` vs
+`_open`), and the furniture variant likewise. Two costs: the gripper can only take 2
+values when a real gripper is continuous, and getting any gripper supervision requires
+pairing frames ACROSS subsets -- which is easy to get wrong, and did go wrong here
+(pairing across `_furniture` too meant the kitchen was being repainted between the two
+frames of a single "motion").
+
+ONE dataset, with these columns:
+    observation.state            xyz(3) + quaternion_xyzw(4) + gripper(1), CONTINUOUS
+    observation.state_next       the same 8 values at s_t+h
+    observation.delta_eef        translation(3) + rotation quaternion_xyzw(4)
+    observation.embodiment_index
+    observation.camera_extrinsics    4x4, or position + quaternion
+    observation.camera_intrinsics    fx, fy, cx, cy
+    observation.eef_pixel            (u,v) -- for BOTH frames if possible
+    observation.eef_in_frame
+    (any remaining nuisance axis, e.g. colour variant, as a COLUMN)
+
+Please state the quaternion convention (xyzw or wxyz) in the dataset card. The two
+corpora in this project use OPPOSITE conventions and it is documented nowhere, which is
+a silent and very hard-to-find source of wrong labels.
+
+--------------------------------------------------------------------------------
+6. SHIP AN EMBODIMENT NAME MAPPING  (very cheap, unblocks a key analysis)
+--------------------------------------------------------------------------------
+`observation.embodiment_index` is an integer with no key anywhere -- not in meta/, not
+in the dataset card. So held-out splits can only be random, and "unseen ARM" cannot be
+told apart from "unseen GRIPPER", which is one of the questions this project most wants
+to answer. Please ship `meta/embodiments.json` mapping each index to
+{"arm": ..., "gripper": ...}.
+
+--------------------------------------------------------------------------------
+CHECKS TO RUN BEFORE SHIPPING -- each corresponds to a failure we actually hit
+--------------------------------------------------------------------------------
+1. RECONSTRUCTION. On a sample of rows, assert that applying observation.delta_eef to
+   observation.state reproduces observation.state_next: position to 1e-9, rotation to
+   1e-6, comparing quaternions sign-invariantly (q and -q are the same rotation).
+2. NO SHORTCUT. Group by embodiment and confirm the sorted list of (pose_t, pose_h) is
+   IDENTICAL for every robot. If it is not, embodiment identity leaks into the label.
+3. MOTION REALISM. Print the mean |translation| and mean rotation magnitude over your
+   pairs. Target ~0.10 m and ~5-10 degrees. If rotation comes out near 50 degrees, the
+   sampling is still workspace-covering rather than local.
+4. CAMERA CONSTANCY. Confirm the camera parameters are byte-identical between the two
+   frames of every pair, and across the dataset if you took the fixed-camera design.
+5. PIXEL COVERAGE. Histogram observation.eef_pixel. With a fixed camera it should still
+   cover the frame broadly, because the POSES vary. If it forms a few tight clusters,
+   the pose sampling is too narrow -- that is the current dataset's failure mode.
+6. COMPLETE UPLOAD. Confirm `videos/` exists and its file count matches the episode
+   count. One subset shipped with data/ and meta/ but no videos/: info.json declared
+   231,678 frames and not one of them could be decoded.
+7. NO NULLS INSIDE LIST COLUMNS. Rows where the EEF is out of frame must store NaN
+   floats, not Arrow nulls. Nulls inside a list column report null_count = 0 and look
+   like NaN in pandas, but break the `datasets` library at load time with
+   "Could not infer dtype of NoneType". Note that writing NaN through pandas
+   `to_parquet` silently converts it BACK to null -- build the array with pyarrow.
+
+--------------------------------------------------------------------------------
+IF YOU CAN ONLY DO PART OF THIS
+--------------------------------------------------------------------------------
+In order: (1) match the deployment camera, (3) sample local motion pairs and spend the
+freed budget on pose count, (4) resolution. Dropping the nuisance axes is what pays for
+(3), so items 1-3 go together naturally. Adding more embodiments or more backgrounds --
+the axes one would reach for first -- are already measured flat at 1-4% and will not
+help.
+================================================================================

@@ -1,0 +1,285 @@
+================================================================================
+EXPERIMENT 1 -- SELECTIVE VISUAL ALIGNMENT
+Dataset inventory, feasibility verdict, and the plan
+Written 2026-09-12
+================================================================================
+
+VERDICT: FEASIBLE, with two workarounds and one honest limitation.
+
+  The corpus this experiment needs -- one underlying state rendered with many
+  embodiments, inside scenes that vary -- already exists and I had not used it.
+  It is selfws_v2, not eef_pairs. Every prior contrastive run in this repo used
+  eef_pairs, which has 56 embodiments but NO scene axis at all (a flat coloured
+  checkerboard floor). That is precisely why the tower learned appearance
+  invariance and nothing about geometry, and why it was worthless on policy
+  frames. selfws_v2 fixes the axis that was missing.
+
+  Two things are genuinely absent and are worked around below:
+    (1) simulator segmentation masks -- NONE exist in any dataset. Derived
+        instead from the cross-embodiment median. Verified to work.
+    (2) a clean object-state label on the scene-rich corpus -- absent in
+        selfws_v2, present in the LIBERO replay corpus, which is used as the
+        second dataset for exactly that probe.
+
+  The limitation that cannot be worked around: on the scene-rich corpus the
+  object configuration DIVERGES slightly across embodiments after contact,
+  because each arm's contact dynamics differ. The counterfactual is exact for
+  the EEF and approximate for the objects. Quantified and handled in 3.4.
+
+
+================================================================================
+1. FULL DATASET INVENTORY
+================================================================================
+
+1.1 THE COUNTERFACTUAL CORPORA  (one row = one state, N embodiments side by side)
+
+  selfws_v2/kitchen                                          << PRIMARY
+      32 episodes = 32 DISTINCT RoboCasa kitchens (verified by eye: different
+        walls, counters, sinks, faucets, cabinet materials, camera pose)
+      30 embodiments = 6 arms x 5 grippers, all rendered per row, pixel-aligned
+        arms      UR5eOmron, PandaOmron, IIWAOmron, JacoOmron, SawyerOmron,
+                  VX300SMobile
+        grippers  (default/R85), R140, PG, RG, AG
+      15,515 rows  ->  465,450 images at 180x320
+      per-embodiment labels: eef_state (8-d), reachable, pos_err_m, rot_err_deg
+      cross-embodiment EEF agreement: std 1.6 mm in xyz  -> the shared-state
+        assumption holds to sub-cm
+      usable rate (reachable & pos_err<1cm): 25 of 30 embodiments >= 0.89;
+        the 5 VX300SMobile combos are 0.20-0.34 (short arm, cannot reach)
+      task: pick <object> from sink -> plate on counter; 8 object types
+      2.9 GB total (with no_kitchen)
+
+  selfws_v2/no_kitchen
+      32 episodes x 140 frames = 4,480 rows, 39 embodiments (adds PiPEROmron,
+      YAMOmron), task "move the gripper through the workspace" -- genuinely
+      task-independent, which is the protocol the research note argues for.
+      But: empty room, wall colour only, no objects. Useful as an ABLATION
+      (does scene content matter for learning the invariance?), not as the
+      main corpus.
+
+  visual_robust_libero/synthetic_replay                      << SECONDARY
+      8 shards (4 LIBERO suites x 2 tasks), 48 episodes, 8,602 rows
+      24 embodiments = 6 arms x 4 grippers per row, 256x256
+        arms      panda, iiwa, ur5e, jaco, kinova3, sawyer
+        grippers  pandagripper, rethinkgripper, robotiq85gripper, robotiq140gripper
+      per-embodiment: eef_state(7), eef_pixel, eef_in_frame, gripper_open,
+        intrinsics, extrinsics, eef_base_rel
+      AND observation.environment_state (110-d)  <-- REAL OBJECT POSES.
+      This is the only corpus with a clean object-state regression target, so
+      it carries evaluation metric 4.
+      Scene axis is weaker: 8 task layouts x 48 object configurations.
+
+  visual_robust_new_barx_ur5e/new_barx/UR5eOmron_PnPSinkToCounter
+      108 episodes = 108 kitchens, 54,063 rows, 6 NAMED embodiments
+      (UR5eOmron, PandaOmron, IIWAOmron, JacoOmron, PandaOmronPandaGripper,
+       JacoOmronPandaGripper). Only 6 embodiments, so too few to hold out an
+      arm, but it is REAL policy-distribution data -- reserved as the transfer
+      check (section 6), not as training data.
+
+  visual_robust_robocasa_x{,_jaco,_bg,_lr}
+      3 tasks x 108 episodes, 3-4 embodiments (+ 4 lighting variants in _bg).
+      Same role as above, fewer embodiments.
+
+1.2 THE eef_pairs FAMILY  (74 GB -- large, and wrong for this experiment)
+
+  56combo_48_bg12_{closed,open}{,_furniture}     48 poses,  56 embodiments
+  56combo_144_bg12_{...}                        144 poses, 56 embodiments
+      8 arms x 7 grippers = the widest embodiment axis available.
+      BUT: no scene. The "12 backgrounds" are 12 colour tints of a checkerboard
+      floor, and they are CONFOUNDED with camera view (bg 0/4/8 -> cam 0,
+      1/5/9 -> cam 1, ...) so there are only 3 true background swaps per camera.
+      The _furniture variants add one table and 1-2 primitive objects.
+      Camera is extremely close: the arm fills the frame, EEF sits at pixel
+      (110, 33) near the top edge, workspace is a 26 x 10 x 26 cm box.
+      -> Cannot supply groups 2 and 4 of the required split. Not used for
+         training here. Retained as an extra held-out EMBODIMENT pool.
+
+  56combo_8000_local_motion_27cam_kitchen_l8s0
+      56 embodiments, 8,000 states, 27 cameras, in a kitchen -- but ONE kitchen
+      (layout 8, style 0). Camera axis is excellent, scene axis is 1.
+      -> Used as an extra held-out CAMERA test, not as a scene axis.
+
+  48_bg12_layout_{closed,opened}   24 embodiments, checkerboard floor. Not used.
+
+1.3 SINGLE-EMBODIMENT POLICY CORPORA (not counterfactual, not used here)
+  barx_*, robocasa_x*, robocasa_sweep, robocasa_turnonsinkfaucet, pretrain,
+  cross_embodiment, visual_robust_libero/action -- normal demonstration data.
+
+1.4 WHAT DOES NOT EXIST ANYWHERE
+  * robot segmentation masks            (searched every meta/info.json)
+  * depth                               (same)
+  * per-object pose in selfws_v2        (present only in the LIBERO corpora)
+  * a robot-free render of a scene      (derivable -- see 2.1)
+
+
+================================================================================
+2. THE TWO WORKAROUNDS
+================================================================================
+
+2.1 ROBOT MASK FROM THE CROSS-EMBODIMENT MEDIAN     -- TESTED, IT WORKS
+
+  The 30 renders of a row are pixel-aligned: same scene, same camera, same
+  instant, only the arm differs. Take the per-pixel median across the 30 and
+  you get a render of the kitchen with NO ROBOT IN IT, because no single arm
+  occupies any given pixel in a majority of the renders. I built it for
+  (episode 0, t=200) and the median image is a clean, robot-free kitchen.
+
+      mask_e(p) = 1  iff  |I_e(p) - median_E I(p)| > tau        tau = 25/255
+
+  Measured robot-pixel fraction: min 0.073, median 0.187, max 0.338 -- the
+  spread across embodiments is exactly what you would expect from arms of
+  different bulk, which is a sanity check that the mask tracks the robot.
+
+  What the mask actually contains, stated honestly:
+      robot  UNION  scene occluded by that robot  UNION  objects that this
+      embodiment has displaced differently from the others.
+  The first two are fine and arguably desirable (the region whose appearance
+  is embodiment-determined). The third is the contamination quantified in 3.4.
+
+  Cost: zero extra rendering, and it is computed from exactly the images the
+  contrastive loss loads anyway.
+
+  IMPORTANT: masks are used ONLY to pool patch tokens during representation
+  training. At inference the encoder is an ordinary image -> feature map. The
+  downstream policy never needs a mask. This satisfies the spec's requirement.
+
+2.2 OBJECT-STATE PROBE FROM THE LIBERO REPLAY CORPUS
+
+  selfws_v2 labels the object only through the task string, and task string is
+  1:1 with episode, which is 1:1 with scene. So an "object identity" probe on
+  selfws_v2 would be a relabelled scene probe -- it would prove nothing. This
+  is a trap worth naming because the numbers would have looked fine.
+
+  Instead metric 4 runs on visual_robust_libero/synthetic_replay, which carries
+  observation.environment_state (110-d object poses) and 24 embodiments in the
+  same counterfactual layout. Scene probe stays on selfws_v2 (32-way), object
+  probe moves to LIBERO (regression, cm).
+
+
+================================================================================
+3. DATA PIPELINE
+================================================================================
+
+3.1 UNDERLYING STATE
+      state_id = (dataset, episode_index, frame_index)
+      scene_id = (dataset, episode_index)                  32 scenes on selfws
+      embodiment_id = arm x gripper                        30 on selfws
+    A sample is (state_id, embodiment_id) and exposes:
+      image (uint8 HxWx3), robot mask (packed bits), eef_state (xyz + quat +
+      gripper), reachable, pos_err, arm_id, gripper_id, scene_id.
+
+3.2 FRAME CACHE (required -- decoding 30 mp4 streams per row is far too slow)
+      tools/exp1_build_cache.py
+      Decodes each (episode, embodiment) video ONCE sequentially, keeps a
+      strided subset of frames, writes per-episode .npz to
+          /dataset/jiyun/exp1_cache/selfws_kitchen/ep{NNN}.npz
+      containing  images (T, E, 180, 320, 3) uint8
+                  masks  (T, E, 180, 320)    packed bits
+                  meta   (T, E, ...)         eef_state, reachable, pos_err
+      Default stride 5 -> ~100 states/episode -> 3,200 states x 30 = 96k images
+      ~16 GB. 12 worker processes, est. 10-20 min.
+
+3.3 DETERMINISTIC SPLIT      tools/exp1_split.py -> outputs/exp1/split.json
+      Written once, committed, never regenerated by a training run.
+      scenes       24 train / 8 held-out          (configurable)
+      embodiments  held out BY ARM, not by combo. This is the correction to the
+                   earlier eef_pairs work, where the holdout was 14 arm-gripper
+                   COMBINATIONS while every arm and every gripper still appeared
+                   in training -- so "+0.974 on held-out" measured generalisation
+                   to a new combination of familiar parts, not to new hardware.
+                   Default: 4 train arms (UR5e, Panda, IIWA, Sawyer) /
+                            2 held-out arms (Jaco, VX300SMobile)
+                   -> 20 train / 10 held-out embodiments
+      The four evaluation groups fall out of the 2x2.
+
+3.4 THE OBJECT-DIVERGENCE CAVEAT
+      Each embodiment replays the same EEF trajectory by IK, so contact
+      outcomes differ and objects end up in slightly different places. Measured
+      per timestep as the fraction of pixels where >=1/3 of embodiments differ
+      from the median. Handling:
+        * train on all frames but report a pre-contact-only ablation
+        * the retrieval gallery is built WITHIN a timestep, so divergence adds
+          noise rather than a shortcut
+        * no_kitchen (no objects at all) is the clean control
+
+
+================================================================================
+4. METHODS
+================================================================================
+  Backbone for all: the SmolVLM2-500M SigLIP vision tower, 768-d, the same one
+  every other experiment in this repo uses. 512x512 pad-resize, 1024 patch
+  tokens at 16x16. Keeps continuity and keeps the encoder droppable into the
+  existing DP / SmolVLA code.
+
+  A  frozen            stock tower, no training. Reference.
+  B  global            InfoNCE on mean-pooled features.
+                       positive = same state_id, different embodiment
+                       negative = other states IN THE SAME SCENE (hard)
+  C  selective         identical loss, but features are MASK-POOLED over the
+                       robot region only. Non-robot patches receive no
+                       alignment gradient.
+  D  selective + state C plus an EEF head on the robot-pooled feature:
+                       L = L_align + lambda * (xyz L1 + 6D-rotation L1)
+                       6D rotation (Zhou et al.) rather than Euler; matches
+                       nothing existing in the repo, which stores quaternions,
+                       so quaternions are converted at load.
+  E  selective + anchor (extra, if time) D plus an L2 anchor pulling NON-robot
+                       patch features toward the frozen teacher. This is the
+                       direct defence against scene collapse; worth having
+                       because C and D constrain nothing outside the mask.
+
+  Shared: lr 1e-5, temperature 0.1, AdamW, bf16 autocast over fp32 weights,
+  8 states x 6 embodiments per batch, 4,000 steps, seed 0. Same as the prior
+  contrastive runs so the numbers are comparable.
+
+
+================================================================================
+5. EVALUATION
+================================================================================
+  Every metric is computed from FROZEN features of the finished encoder. No
+  metric reuses a training loss.
+
+  1. CROSS-EMBODIMENT STATE RETRIEVAL          <- primary
+     query = one embodiment's image; gallery = all OTHER embodiments' images
+     of every state in the group. Correct = same state_id. R@1 and R@5,
+     reported for all four groups. Also the median EEF distance of the top-1
+     hit in cm, because "wrong" alone says nothing about how wrong.
+     A scene control is included: same-scene-different-state pairs, which is
+     what caught stock SigLIP masquerading as pose-aware on the Jaco data.
+
+  2. EEF PROBE            ridge linear probe, frozen features -> xyz + rotation.
+                          Fit on train group, evaluated on all four.
+                          Reported in cm and degrees.
+  3. EMBODIMENT PROBE     linear classifier -> embodiment id, and separately
+                          -> arm id. Diagnostic, not an objective.
+  4. SCENE / OBJECT       32-way scene classification (selfws) and
+                          object-pose regression from environment_state (LIBERO).
+  5. NN VISUALISATION     query + top-5 for A, B, C, D side by side.
+
+  GO/NO-GO, as specified: all three of (retrieval up, especially unseen x
+  unseen) and (EEF preserved) and (scene/object preserved). If C only
+  suppresses the embodiment probe while EEF or scene degrade, that is a
+  failure and will be reported as one. If B already matches C, that will be
+  reported too.
+
+
+================================================================================
+6. AFTER EXPERIMENT 1 (not run now)
+================================================================================
+  The transfer check the whole programme is for: does the encoder trained here
+  still separate states on visual_robust_new_barx_ur5e, which is real policy
+  data with 6 named embodiments including Jaco? The measurement already exists
+  (tools/analyze_jaco_representation.py) and can be pointed at any checkpoint.
+
+
+================================================================================
+7. FILES
+================================================================================
+  tools/exp1_build_cache.py     video -> npz cache + derived masks
+  tools/exp1_split.py           deterministic split -> outputs/exp1/split.json
+  src/lerobot/scripts/exp1_data.py     dataset / sampler / config
+  src/lerobot/scripts/exp1_train.py    methods A-E behind --method
+  src/lerobot/scripts/exp1_eval.py     all five metrics -> JSON
+  scripts/exp1_sanity.sh        tiny run, 50 steps, 2 scenes, 4 embodiments
+  scripts/exp1_main.sh          all methods on the same split
+  outputs/exp1/<method>/        checkpoint, config.json, metrics.json, figures

@@ -1,0 +1,111 @@
+barx3 — cross-embodiment SmolVLA + visual contrastive regularisation
+====================================================================
+
+WHAT THE SETUP IS FOR
+Each robot demonstrates a DIFFERENT task, so task and embodiment are perfectly
+correlated. The question is whether a visual encoder regularised to ignore
+which robot it is looking at transfers task knowledge across embodiments
+better than an unregularised one.
+
+
+1. POLICY TRAINING DATA  (dataset_git/barx_panda_ur5e_iiwa)
+-----------------------------------------------------------
+First 100 episodes of each, 20 fps, 120,360 frames total:
+
+  IIWAOmron   PnPCounterToSink    100 ep   39,388 frames
+  PandaOmron  TurnOnSinkFaucet    100 ep   30,820 frames
+  UR5eOmron   PnPSinkToCounter    100 ep   50,152 frames
+
+Prepared subset: dataset_git/barx3_i100_p100_u100/raw/{iiwa,panda_mg,ur5e}
+Observations: robot0_agentview_right (front) + robot0_eye_in_hand (wrist) + state
+Policy: SmolVLA, lr 1e-4, action chunk 50, bf16, 50,000 steps, ckpt every 10k
+
+Task instructions are LANGUAGE-NORMALISED (--normalize-task-language). Not
+cosmetic: the three source corpora punctuate instructions differently, and since
+each robot does a different task, that styling is perfectly correlated with the
+embodiment — without normalising, the language encoder can identify the robot
+from capitalisation instead of from the instruction. Both arms share the setting.
+
+
+2. CONTRASTIVE REGULARISATION
+------------------------------
+DATASET  dataset_git/visual_robust_new_barx/new_barx  (separate from the policy data)
+
+  IIWAOmron_PnPCounterToSink    108 ep   42,378 frames
+  PandaOmron_TurnOnSinkFaucet   108 ep   33,296 frames
+  UR5eOmron_PnPSinkToCounter    108 ep   54,063 frames
+
+Each ROW holds the same frame rendered from all three embodiments
+(observation.image.{IIWAOmron,PandaOmron,UR5eOmron}) — same scene, same instant,
+same camera, only the robot differs.
+
+POSITIVES  the 3 renders of one frame (same EEF state, different robot)
+NEGATIVES  other frames, drawn from the SAME EPISODE (same_episode_negatives=true)
+           — deliberately hard: same kitchen, same lighting, most objects in place
+
+WHERE IT ATTACHES  head_mode="none" → the vision backbone's 1024 patch tokens are
+mean-pooled and the supervised-contrastive loss lands DIRECTLY on the backbone —
+the same encoder the policy uses. No projection head. (The config prints
+visual_robust_freeze_backbone=True but that flag only applies to head_mode=
+"adapter_mlp"; here freeze_backbone is False and the gradient does reach the
+backbone.)
+
+FRONT CAMERA ONLY  wrist_alignment_weight = 0. The wrist representation is trained
+by the action loss alone. The wrist renders exist in the dataset, so enabling it
+later is a weight change.
+
+HYPERPARAMETERS  weight 0.5 · temperature 0.1 · 3 views/frame · aux batch 32 frames
+                 · encoder chunk 32 · its own dataloader, interleaved with action batches
+LOSS             total = action_loss + 0.5 × contrastive_loss
+
+
+3. THE FOUR RUNS  (2x2: wrist camera x contrastive)
+----------------------------------------------------
+                        wrist   policy batch      aux        GPUs   status
+  baseline              on      32/GPU  (128)     —          0-3    done, 6h10m
+  contrastive           on      32/GPU  (128)     vb=32      4-7    done, 11h32m
+  baseline    nowrist   off     36/GPU  (144)     —          0-3    running
+  contrastive nowrist   off     36/GPU  (144)     vb=32      4-7    running
+
+Output: outputs/barx3/{baseline,contrastive} and outputs/barx3_nowrist/{...}
+
+BATCH SIZES were measured, not chosen. Per pair they are matched — sizing each
+run to its own ceiling would confound batch size with method. Across pairs they
+differ (32 vs 36), so the wrist comparison carries a batch confound; the
+baseline-vs-contrastive comparison inside each pair does not.
+
+Measured ceilings (4 GPUs, 12-step probes):
+  with wrist     bs=32/vb=32 → 72.3 GB OK;  bs=48 → OOM;  vb=40,48 → OOM
+  without wrist  bs=36/vb=32 → 78.9 GB OK;  bs=40 → OOM;  vb=40,48,64 → OOM
+
+Two things worth knowing from those probes:
+  * Dropping the wrist camera saves essentially NO GPU memory (72,251 vs
+    72,275 MiB at the same batch). The auxiliary pass, not the policy's own
+    images, is what fills the card.
+  * vb=32 is a HARD ceiling — vb=48 OOMs even at policy batch 16, because the
+    aux term backprops 32x3=96 full-resolution images through the entire vision
+    tower and that cost is independent of the policy batch.
+
+
+4. KNOWN CAVEATS
+-----------------
+CONTRASTIVE BATCH IS PER-GPU. The aux loader gives each of the 4 GPUs its own
+32 frames, and the loss is computed locally — there is no all_gather anywhere in
+the trainer. So each anchor sees 95 negatives (32x3 = 96 samples), not 383. The
+4 GPUs are 4 independent contrastive problems whose gradients DDP averages: that
+helps gradient noise, it does not increase the negative count. Gathering the
+pooled features before the loss would give 4x the negatives for ~0.3 MB and no
+extra activation memory — not done here, worth a follow-up run.
+
+AUX TERM DOMINATES THE LOSS. At step 20k the split was action 0.068 +
+0.5 x 1.959 = 1.048 total, i.e. ~94% of the magnitude, and grad-norm 3.1 against
+the baseline's 0.10. The action loss still converged to the baseline's by ~18k
+steps, so it is not fatal, but a lower-weight variant (0.1) is worth running.
+
+TRAINING LOSS WILL NOT SEPARATE THE METHODS. The baseline's action loss is flat
+from ~14k steps on 300 episodes. The comparison that matters is held-out
+evaluation — in particular each robot on a task it never demonstrated.
+
+CONTRASTIVE OBJECTIVE IS LEARNING, NOT COLLAPSED. Chance for 96 samples with 2
+positives is ln(95) = 4.55, perfect is ln(2) = 0.69; observed 1.2-2.0. Feature
+std 2.01, so no representational collapse.

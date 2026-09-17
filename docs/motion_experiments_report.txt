@@ -1,0 +1,514 @@
+================================================================================
+CROSS-EMBODIMENT MOTION LEARNING -- EXPERIMENTS 1, 2, 3
+what was run, on what data, measured how, and what came out
+report written 2026-09-03 | repo /home/gpuuser/jiyun/lerobot-VAI (feat/knowledge-insulation)
+================================================================================
+
+THE HYPOTHESIS UNDER TEST
+-------------------------
+If a model learns to read the SAME Cartesian EEF motion across many synthetically
+rendered robot morphologies, that visual-motion knowledge may transfer to held-out
+embodiments and carry task knowledge to robots with no demonstrations.
+
+Split into three questions that can fail independently:
+
+  Q1  can visual motion knowledge generalise to unseen robot morphologies?
+  Q2  does increasing synthetic embodiment diversity improve that generalisation?
+  Q3  does that knowledge improve task transfer to robots without demonstrations?
+
+SUMMARY OF FINDINGS
+-------------------
+  Q1  YES.  0.67 cm translation error on 14 embodiments never trained on, against a
+            4.66 cm predict-the-mean baseline. Direction cosine 0.980.
+  Q2  YES, and it is morphology diversity rather than data volume. Held-out error
+            falls 4.3x from 2 to 42 embodiments and has not flattened. Holding the
+            total sample count FIXED reproduces the curve exactly.
+  Q3  CANNOT BE ANSWERED with the current evaluation. Not a negative result -- the
+            measurement has no resolution. Details in section 5.
+
+
+================================================================================
+1. DATASETS
+================================================================================
+
+1.1 SYNTHETIC MOTION DATA -- /dataset/jiyun/dataset_git/eef_pairs/
+--------------------------------------------------------------------
+Four subsets, used together:
+    56combo_48_bg12_closed
+    56combo_48_bg12_open
+    56combo_48_bg12_closed_furniture
+    56combo_48_bg12_open_furniture
+
+Structure: 56 embodiments x 48 canonical EEF poses x 12 backgrounds x 4 camera
+views. One rendered frame per row, 312,176 rows total. Each episode_index IS one
+pose -- verified, the state std within an episode is 3e-5.
+
+observation.state is [9]:  xyz(0:3) + quaternion_xyzw(3:7) + eef_pixel(7:9)
+  (state[7:9] was verified identical to the observation.eef_pixel column, max
+   difference exactly 0.0)
+
+WHY NO NEW RENDERING WAS NEEDED
+All 56 embodiments are posed at the SAME 48 canonical EEF states. So a motion
+defined as "pose i -> pose j" is literally the same motion on every robot. The
+brief asked for a shared motion DISTRIBUTION across embodiments; this is stronger.
+One pool of pose pairs is drawn once and reused for every embodiment, so embodiment
+identity carries exactly zero information about the label. That makes the
+identity-as-shortcut failure impossible by construction rather than by sampling
+luck, and assert_no_motion_shortcut() checks it at every startup.
+
+MOTION SCALE
+The 48 poses are 0.009 - 0.307 m apart pairwise. Pairs are filtered to <= 0.15 m
+("local motions"), leaving 1262 pairs with mean displacement 0.096 m.
+
+1.2 REAL TASK DATA -- dataset_git/barx_panda_ur5e_iiwa/
+--------------------------------------------------------
+Three trees, one task (PnPSinkToCounter), three embodiments:
+    IIWAOmron   500,288 frames / 1000 episodes
+    PandaOmron  446,542 frames /  900 episodes
+    UR5eOmron   498,810 frames / 1000 episodes
+
+Camera used: observation.images.robot0_agentview_right, 180x320, base-mounted.
+observation.state is [16]: base pose(0:7), eef xyz(7:10), eef quat_wxyz(10:14),
+gripper(14:16). The layout is not documented anywhere; it was recovered from
+variance structure and is recorded in CLAUDE.md section 1.
+
+1.3 THE TWO CONVENTION TRAPS
+-----------------------------
+(a) QUATERNION ORDER IS OPPOSITE BETWEEN THE TWO CORPORA.
+    eef_pairs is xyzw. The barx trees are wxyz (verified: the first component sits
+    near 1.0 for a near-identity rotation, and the norm is exactly 1).
+    motion_data.py is xyzw throughout and is the only place the conversion happens.
+
+(b) THE 12-DIM ACTION IS NOT A METRIC DISPLACEMENT.
+    action[12] = [base(3), torso, mode, dpos(3), drot(3), gripper]
+    a[0:4] are identically zero and a[4] is -1 (mode) in these trees, so only 7 of
+    12 dimensions carry signal. dpos/drot are NORMALISED OSC controller commands.
+
+    Regressing the achieved base-frame EEF delta on the commanded dpos:
+        IIWA   R2 = 0.47   ~0.007 m per unit
+        Panda  R2 = 0.31   ~0.006 m per unit
+        UR5e   R2 = 0.71   ~0.010 m per unit
+    A different near-diagonal matrix per robot and less than half the variance
+    explained. Using the action as the cross-embodiment motion target would bake
+    per-robot controller gains into the label -- which is exactly the embodiment
+    shortcut the hypothesis is trying to avoid.
+
+    EVERY MOTION TARGET IN THESE EXPERIMENTS IS THE MEASURED STATE DELTA INSTEAD,
+    expressed in the robot BASE frame. The camera is base-mounted, so image and
+    label stay in a fixed relationship.
+
+1.4 REQUIRED SANITY TEST (runs at every startup)
+-------------------------------------------------
+verify_reconstruction() asserts that applying the computed delta to s_t reproduces
+s_t+h:
+    position:  p_i + d_pos  ->  p_j        max error  0.00e+00 m
+    rotation:  q_rel (x) q_i ->  q_j       max error  7.07e-08   (sign-invariant,
+                                           because q and -q are one rotation)
+
+
+================================================================================
+2. MODEL AND TRAINING
+================================================================================
+
+Deliberately minimal -- the question is the data, not the architecture.
+
+    image_t   --\
+                  SigLIP tower (shared weights) -> attention pool -\
+    image_t+h --/                                                   concat -> MLP
+                                                                     |
+                                    delta_position (3) + delta_quaternion (4)
+                                    + gripper change (3-class)
+
+Backbone: the SmolVLM SigLIP vision tower, the same one the policies use.
+Pooling:  attention pooling, not mean. A mean over 1024 position-tagged patches is
+          close to location-blind (measured, CLAUDE.md section 3), and a
+          displacement is nothing but a change of location.
+Losses:   position MSE on normalised delta; rotation 1 - |<q_pred, q_target>|
+          (never MSE -- that punishes a correct prediction carrying the other
+          sign); gripper cross-entropy weighted 0.1.
+Training: 6000 steps, batch 24 pairs (48 images), bf16 autocast, tower lr 1e-5,
+          head lr 1e-4.
+
+LEAKAGE GUARD: assert_no_leakage() rejects any overlap between train and held-out
+embodiments, and the sampled training pool is re-checked for held-out ids before
+the first step.
+
+
+================================================================================
+3. EXPERIMENT 1 -- DOES MOTION UNDERSTANDING GENERALISE ACROSS MORPHOLOGY?
+================================================================================
+
+SETUP    42 training embodiments, 14 held out at random.
+         Held out: 0, 1, 3, 8, 12, 14, 23, 27, 28, 33, 34, 36, 42, 49
+
+HOW IT WAS EVALUATED
+  96 freshly sampled pairs per embodiment, scored per embodiment and then averaged
+  within each split, so a single odd robot cannot dominate. Reported metrics:
+    translation MAE          metres, the direct error
+    translation direction    cosine between predicted and true displacement --
+                             separates "right direction, wrong magnitude" from
+                             "wrong entirely"
+    rotation error           geodesic degrees, sign-invariant
+    gripper accuracy         3-class: opened / unchanged / closed
+
+BASELINES (the numbers below are meaningless without these)
+    predict the mean displacement every time    4.66 cm
+    predict no rotation at all                  60.2 deg
+
+RESULTS
+    split       trans MAE    dir cos    rot err    grip acc
+    seen          0.41 cm      0.993      8.2 deg     0.992
+    HELD-OUT      0.67 cm      0.980     10.8 deg     0.970
+
+    per held-out embodiment (translation MAE):
+      emb  0  0.56 cm     emb 27  0.67 cm
+      emb  1  0.49 cm     emb 28  0.83 cm
+      emb  3  0.55 cm     emb 33  0.52 cm
+      emb  8  0.41 cm     emb 34  0.52 cm
+      emb 12  1.00 cm     emb 36  0.66 cm
+      emb 14  0.92 cm     emb 42  0.84 cm
+      emb 23  0.74 cm     emb 49  0.70 cm
+
+READING
+  7x better than predict-the-mean on robots never seen, with the direction
+  essentially correct. The seen -> held-out gap is small (0.41 -> 0.67 cm), so this
+  is generalisation and not recall. No held-out embodiment fails; the worst is
+  1.00 cm.
+  => Q1 IS YES.
+
+
+================================================================================
+4. EXPERIMENT 2 -- DOES EMBODIMENT DIVERSITY HELP, OR IS IT JUST MORE DATA?
+================================================================================
+
+The same 14 embodiments are held out at every rung, so the test set never moves.
+Two sampling protocols, because one alone cannot separate the two explanations:
+
+  PROTOCOL A   4000 pairs per embodiment -> total data GROWS with embodiment count
+  PROTOCOL B   60,000 pairs total regardless -> total data FIXED
+
+RESULTS (held-out embodiments)
+
+  n_emb |  A samples  A trans MAE  A rot  |  B samples  B trans MAE  B rot
+  ------+--------------------------------+--------------------------------
+      2 |     8,000      3.61 cm  52.9deg |    60,000      3.56 cm  55.1deg
+      4 |    16,000      2.54 cm  32.2deg |    60,000      2.34 cm  33.0deg
+      8 |    32,000      1.73 cm  27.2deg |    60,000      1.79 cm  27.9deg
+     16 |    64,000      1.20 cm  17.7deg |    60,000      1.16 cm  16.5deg
+     42 |   168,000      0.74 cm  11.1deg |    60,000      0.84 cm  12.0deg
+
+  direction cosine, held out:   n=2 0.52/0.57   n=4 0.77/0.80   n=8 0.89/0.89
+                                n=16 0.93/0.93  n=42 0.98/0.97   (A/B)
+
+READING
+  Protocol A ends with 2.8x the data of protocol B and the two curves are
+  indistinguishable at every rung. The gain therefore comes from MORPHOLOGY
+  DIVERSITY, not from having more images. Error falls 4.3x from 2 to 42
+  embodiments and has not flattened, so more embodiments is still the right lever.
+
+  THE CONTROL THAT MAKES THIS READABLE: seen-split error moves the OTHER WAY,
+  0.27 cm at n=2 rising to 0.46 cm at n=42. Few embodiments is not an easier
+  problem -- it is memorisation. The model fits its own two robots better and
+  transfers worse.
+  => Q2 IS YES, AND IT IS DIVERSITY.
+
+  Figure: outputs/motion_experiments.png
+
+
+================================================================================
+5. EXPERIMENT 3 -- DOES IT HELP TASK TRANSFER? (AND WHY WE CANNOT TELL)
+================================================================================
+
+POLICY   the language-conditioned Diffusion Policy already in the repo, chosen over
+         a VLA on purpose: a VLM failing to interpret a separately learned
+         representation would be an extra confound.
+
+THREE ARMS, identical stock tower / batch 32 / 15,000 steps, differing ONLY in the
+auxiliary:
+    A  vanilla              (image_t, task) -> action
+    B  real motion aux      + (image_t, image_t+25) -> delta_EEF on real trajectories
+    C  synthetic + real     + the same objective on 42 synthetic embodiments
+
+UR5eOmron was excluded from task training ENTIRELY, then scored -- so "a robot with
+no task demonstrations" is a real condition and not a label.
+
+HORIZON MATCHING: real motion over 25 steps at 20 fps is 0.09 m, matching the
+synthetic 0.094 m. This was measured, not guessed.
+
+RESULTS (action loss)
+    arm                  IIWA(seen)  Panda(seen)  UR5e(HELD OUT)  final motion loss
+    A vanilla               0.0316       0.0368        0.0355       --
+    B real motion aux       0.0332       0.0379        0.0376       1.61 (from 7.45)
+    C synthetic + real      0.0331       0.0377        0.0373       1.79 (from 4.50)
+
+The auxiliary was genuinely training -- its loss fell 4.6x and 2.5x. It is not a
+dead term. And it bought nothing; A is marginally best everywhere.
+
+BUT THE CONTROLS SHOW THE MEASUREMENT CANNOT ANSWER THE QUESTION
+    UR5e action loss WITH its own demonstrations (D_headroom)   0.0348
+    UR5e action loss WITHOUT any                (A_vanilla)     0.0355
+    ------------------------------------------------------------------
+    TOTAL HEADROOM -- what a UR5e demonstration is worth         0.0007
+
+    seed-to-seed spread, same arm (C vs C seed 1)                0.0021
+    the A-vs-C difference the null was about                     0.0018
+
+  The noise is 3x the entire headroom, and larger than the effect being claimed.
+  Even a perfect method could only have moved 0.0007, which is a third of the
+  run-to-run variation. Second seeds also FLIP the seen-robot ordering (A_vanilla
+  IIWA 0.0316 -> 0.0361, Panda 0.0368 -> 0.0337), which is the same warning again.
+
+  => EXPERIMENT 3 IS NOT EVIDENCE AGAINST THE HYPOTHESIS. It is a measurement with
+     no resolution. Reporting it as "synthetic motion supervision does not help"
+     would be wrong.
+
+WHY THE HEADROOM IS SO SMALL (structural, not a bug)
+  The action space is a normalised delta convention shared by all three robots and
+  the task motion is nearly identical for each, so predicting UR5e actions barely
+  requires having seen UR5e. A metric a held-out robot already scores well on
+  cannot show that transfer improved.
+
+CORROBORATION: the four earlier DP integration runs say the same thing. Step-matched,
+frozen / finetune / scratch / online all sit within 0.0005 of each other
+(0.0347-0.0352 at 10k steps). One 'online' log line read 0.0247 and looked like a
+real gain until it was step-matched -- it was a single noisy batch. Single log lines
+are not results.
+
+  Figure: outputs/exp3_headroom.png
+
+
+================================================================================
+6. WHAT IS NOT DONE, AND WHAT SHOULD HAPPEN NEXT
+================================================================================
+
+6.1 NO TASK-SUCCESS EVALUATION EXISTS ANYWHERE IN THIS REPO
+    robosuite / robocasa / mujoco are not installed; cfg.env has never been set in
+    any run here, so pc_success has never been computed. Every number in this
+    document is action loss or a feature statistic.
+    THIS IS NOW THE HIGHEST-VALUE MISSING PIECE. Q1 and Q2 got clean answers
+    precisely because motion prediction has a real metric. Q3 does not, and no
+    amount of further training will change that.
+
+6.2 THE ROTATION DISTRIBUTIONS DO NOT MATCH
+    real trajectory over 25 steps   ~9 degrees
+    synthetic pose pairs            ~60 degrees
+    The 48 poses were sampled to COVER the workspace, not to resemble trajectory
+    segments. Capping at 30 degrees narrows it to 21 but costs vocabulary (1262
+    pose pairs down to 270).
+    PROPER FIX, at render time: sample s_t, then a LOCAL delta_eef, then render --
+    which is what the original brief described. The current data approximates it.
+
+6.3 THE THREE HELD-OUT CATEGORIES COULD NOT BE BUILT
+    The brief asked for novel-arm/seen-gripper, seen-arm/novel-gripper and
+    novel-both. eef_pairs' observation.embodiment_index is an integer with no name
+    mapping anywhere in the export, so the split is random and those categories
+    cannot be separated.
+    NOTE: the visual_robust_new_barx_ur5e tree DOES name its 6 embodiments
+    (UR5eOmron, PandaOmron, IIWAOmron, JacoOmron, PandaOmronPandaGripper,
+    JacoOmronPandaGripper) and therefore does support the three categories --
+    JacoOmronPandaGripper is precisely novel arm + seen gripper. That is the route
+    to closing this gap.
+
+6.4 EXPERIMENT 3'S HELD-OUT ROBOT IS ONE OF THREE
+    Holding one of IIWA/Panda/UR5e out leaves two to train on. A corpus with more
+    embodiments per task is needed for this to be a strong test.
+
+
+================================================================================
+7. FILES
+================================================================================
+CODE
+  src/lerobot/scripts/motion_data.py            conventions, guards, pair sampling
+  src/lerobot/scripts/train_motion_prediction.py  experiments 1 and 2
+  src/lerobot/scripts/train_dp_embodiment.py    experiment 3 (--motion-aux, --heldout-robots)
+  tools/report_motion_experiments.py            tables + figure
+  tools/merge_eef_pixel_columns.py              adds the re-exported pixel columns
+
+RESULTS
+  outputs/motion_prediction/<tag>/results.json  per-embodiment breakdown
+  outputs/motion_prediction/summary.txt         the tables above
+  outputs/dp_motion/<arm>/history.json          includes per_robot seen/held-out
+  outputs/motion_experiments.png                experiment 2 figure
+  outputs/exp3_headroom.png                     experiment 3 headroom vs noise
+
+COMMANDS
+  python src/lerobot/scripts/train_motion_prediction.py --tag exp1_n42 --steps 6000
+  python src/lerobot/scripts/train_motion_prediction.py --tag exp2B_n8 \
+      --num-embodiments 8 --fixed-total-samples 60000 --steps 6000
+  python tools/report_motion_experiments.py
+  python src/lerobot/scripts/train_dp_embodiment.py --mode scratch --motion-aux both \
+      --heldout-robots UR5eOmron --steps 15000 --batch-size 32 \
+      --output-dir outputs/dp_motion/C_synth_real
+
+Full detail, including every trap hit along the way, is in CLAUDE.md sections 9-10.
+================================================================================
+
+
+================================================================================
+8. THE JACO EXPERIMENT -- A NOVEL ARM, WITH REAL GROUND TRUTH
+================================================================================
+(added after the re-export landed; sections 1-7 predate it)
+
+WHAT THE RE-EXPORT CHANGED
+  ChiefJang/barx_panda_ur5e_iiwa and ChiefJang/visual_robust_robocasa_x now carry
+  eef_pixel and eef_in_frame. Two cautions applied when taking them:
+
+  (a) the re-export is v2.1 and the local trees are already converted to v3.0, and
+  (b) the re-exported info.json for the visual-robust tree declares only THREE
+      image features where the local one declares all SIX -- Jaco among the missing.
+
+  Downloading meta/ over the local trees would therefore have reverted the
+  conversion AND deleted Jaco, which is the whole point of this experiment. So only
+  the new parquet was pulled, joined on (episode_index, frame_index), and the two
+  columns written into the local v3.0 files. All four trees joined 100% of rows:
+  54,063 / 500,288 / 446,542 / 498,810.
+  (tools/merge_eef_pixel_columns.py; the hub rate limit is 1000 API requests per
+  5 minutes and a 1000-file tree exceeds it, so it backs off for 60 s on a 429.)
+
+THE DATASET
+  visual_robust_new_barx_ur5e renders the SAME 108 episodes from six NAMED
+  embodiments. eef_pixel is one column per FRAME, not per embodiment -- correct,
+  since every render places the same EEF pose under the same camera. So the target
+  is identical across the six and ONLY the appearance of the robot changes.
+  80.2% of frames have the EEF in frame; the rest are excluded via eef_in_frame.
+
+  This is what finally provides the three held-out categories the brief asked for,
+  which the integer embodiment_index on eef_pairs could never support:
+      PandaOmron / IIWAOmron / UR5eOmron   seen arm, own gripper
+      PandaOmronPandaGripper               seen arm, seen gripper (recombined)
+      JacoOmronPandaGripper                NOVEL ARM, seen gripper
+      JacoOmron                            NOVEL ARM, novel gripper
+
+EVALUATION
+  641 in-frame samples from 40 episodes, every 25th frame. The last 160 are held
+  out as the evaluation set for every embodiment; the two Jaco embodiments never
+  appear in training at all. Metric: Euclidean pixel error against the ground-truth
+  eef_pixel on a 320x180 image.
+
+RESULT
+  embodiment               category                  zero-shot   trained-on-4
+  ------------------------------------------------------------------------------
+  PandaOmron               seen arm, own gripper       50.7 px       11.8 px
+  IIWAOmron                seen arm, own gripper       51.7 px       10.6 px
+  UR5eOmron                seen arm, own gripper       55.2 px       11.7 px
+  PandaOmronPandaGripper   seen arm, seen gripper      63.1 px       11.3 px
+  JacoOmronPandaGripper    NOVEL ARM, seen gripper     63.5 px       15.0 px
+  JacoOmron                NOVEL ARM, novel gripper    52.1 px       14.2 px
+  ------------------------------------------------------------------------------
+  mean seen                                            55.2 px       11.4 px
+  mean held-out Jaco                                   57.8 px       14.6 px
+
+  "zero-shot"    = the pixel head trained on synthetic eef_pairs renders, applied
+                   to these real kitchen frames with nothing adapted.
+  "trained-on-4" = the same head trained on real frames of the four non-Jaco
+                   embodiments only.
+
+TWO CONCLUSIONS
+
+  (1) IT CONFIRMS SECTION 9.5 DIRECTLY, WITH GROUND TRUTH.
+      The synthetic head scores 50-63 px on real frames against 3-5 px in its own
+      domain. Section 9.5 could only infer this by fitting a camera to the head's
+      own predictions, because no ground-truth pixel existed on policy data. Now it
+      is measured. Note that the zero-shot failure is UNIFORM across all six
+      embodiments -- Jaco is not worse than Panda. The head is failing on the scene
+      domain, not on morphology, which is exactly what the geometry-sensitivity
+      analysis predicted.
+
+  (2) LOCALISATION DOES TRANSFER TO A NOVEL ARM once trained in the right domain.
+      11.4 px on embodiments it trained on, 14.6 px on an arm it has never seen --
+      29% worse, not broken. And novel arm + novel gripper (14.2 px) is no worse
+      than novel arm + seen gripper (15.0 px), so within this tree it is the ARM
+      that carries the difficulty, and even that costs about 3 px.
+
+      This is the real-data counterpart of experiments 1 and 2, which ran on
+      synthetic renders: real trajectories, real cluttered kitchens, named
+      morphologies.
+
+CAVEATS
+  641 samples from 40 episodes and 1500 training steps -- indicative, not
+  definitive. The seen-vs-Jaco difference of ~3 px has no repeat run behind it, so
+  it should not be read finer than "small". Widening to all 108 episodes and adding
+  seeds is cheap and is the obvious next step.
+
+  Figure: outputs/jaco_transfer.png    Data: outputs/jaco_{zeroshot,trained}.json
+  Tool:   tools/eval_jaco_eef_pixel.py --mode {zeroshot,train}
+================================================================================
+
+
+================================================================================
+9. TWO-IMAGE MOTION PREDICTION ON A NOVEL ARM (the Jaco motion experiment)
+================================================================================
+
+A DISTINCTION THAT IS EASY TO LOSE
+  Experiments 1 and 2   two images -> the Cartesian motion between them.
+                        Ran on eef_pairs only. Those embodiments are unnamed
+                        integer ids and Jaco is NOT among them.
+  Section 8 (pixel)     ONE image -> where is the gripper. A different task.
+  This section          the missing cell: the two-image motion task, on REAL
+                        trajectories, with Jaco held out.
+
+SETUP
+  Same six named embodiments, same 108 episodes. observation.state is shared by
+  every render, so the motion label is IDENTICAL across all six and only the
+  robot's appearance changes.
+  738 pairs from 60 episodes, horizon 25 frames (1.2 s) giving 0.102 m mean
+  displacement -- matched to the synthetic 0.096 m. Last 140 pairs held out as the
+  evaluation set. Trained on the four non-Jaco embodiments, 2000 steps.
+  The same reconstruction assertion runs here too and passes.
+
+FRAME CAVEAT (stated, not buried)
+  This tree's xyz is WORLD frame and the base is parked differently per episode, so
+  one visual motion maps to different world deltas across episodes. The image does
+  show the kitchen, so base orientation is inferable and the task is not ill-posed
+  -- but it is harder than a base-frame target, and the absolute numbers are worse
+  because of it. The confound is identical for all six embodiments, so the
+  seen-vs-Jaco comparison is unaffected.
+
+RESULTS
+  embodiment               category                  trans MAE  dir cos   rotation
+  ------------------------------------------------------------------------------
+  PandaOmron               seen arm, own gripper       3.25 cm    0.705    9.3 deg
+  IIWAOmron                seen arm, own gripper       3.22 cm    0.696    9.4 deg
+  UR5eOmron                seen arm, own gripper       3.23 cm    0.715    9.3 deg
+  PandaOmronPandaGripper   seen arm, seen gripper      3.48 cm    0.680    9.4 deg
+  JacoOmronPandaGripper    NOVEL ARM, seen gripper     4.22 cm    0.515    9.2 deg
+  JacoOmron                NOVEL ARM, novel gripper    3.57 cm    0.658    9.0 deg
+  ------------------------------------------------------------------------------
+  mean seen                                            3.30 cm    0.699    9.3 deg
+  mean held-out Jaco                                   3.89 cm    0.587    9.1 deg
+  BASELINE: predict the training mean                  5.23 cm      --     8.8 deg
+                                                                    (identity rot.)
+
+READING -- IT WORKS, BUT WEAKLY, AND MUCH LESS WELL THAN ON SYNTHETIC DATA
+
+  Translation is genuinely learned and does transfer: 3.30 cm on seen embodiments
+  against a 5.23 cm predict-the-mean baseline, and 3.89 cm on an arm never seen.
+  Direction cosine drops 0.699 -> 0.587 from seen to held out.
+
+  But this is nowhere near experiment 1's synthetic result (0.67 cm against a
+  4.66 cm baseline, direction cosine 0.980). The two are NOT comparable and the
+  gap should not be read as "Jaco is hard". Three reasons, in order of likely size:
+     738 training pairs here versus 168,000 there
+     a world-frame target with per-episode base yaw versus a clean base-frame one
+     2000 steps versus 6000
+
+  ROTATION IS NOT LEARNED AT ALL. The model scores 9.0-9.4 deg while simply
+  predicting no rotation scores 8.8 deg -- it is WORSE than the trivial baseline.
+  Real trajectory rotation over 25 frames averages about 7 deg, which is a much
+  smaller and subtler signal than the synthetic pose pairs' 60 deg. Any claim about
+  rotation transfer would be unsupported.
+
+  Within the held-out pair, novel arm + novel gripper (3.57 cm, cos 0.658) scores
+  BETTER than novel arm + seen gripper (4.22 cm, cos 0.515). That ordering is the
+  opposite of the intuitive one and rests on 140 evaluation samples with no repeat
+  run, so it should be treated as noise rather than a finding.
+
+WHAT WOULD MAKE THIS CONCLUSIVE
+  All 108 episodes and a denser stride (738 pairs is the binding constraint), a
+  base-frame target, and 2-3 seeds. All cheap. Until then this establishes that the
+  two-image motion task transfers to an unseen arm in the real domain, and does not
+  establish how well.
+
+  Figure: outputs/jaco_motion.png    Data: outputs/jaco_motion.json
+  Tool:   tools/eval_jaco_motion.py
+================================================================================
