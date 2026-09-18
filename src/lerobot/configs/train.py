@@ -118,7 +118,14 @@ class TrainPipelineConfig(HubMixin):
             else:
                 self.job_name = f"{self.env.type}_{self.policy.type}"
 
-        if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
+        # This runs on every rank of a multi-GPU (accelerate/torchrun) launch, all sharing the same
+        # --output_dir string, well before any inter-process barrier. Only rank 0 ever writes to
+        # output_dir, but non-zero ranks can reach this check *after* rank 0 has already created it
+        # (e.g. via its own earlier logging/wandb setup), which would otherwise make this safety
+        # check spuriously fail the whole job depending on process-startup timing. Only rank 0's
+        # check should be authoritative.
+        is_rank_zero = os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")) == "0"
+        if not self.resume and is_rank_zero and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             raise FileExistsError(
                 f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
                 f"Please change your output directory so that {self.output_dir} is not overwritten."

@@ -192,3 +192,6 @@ dataset_git/
 dataset_git
 # generated at runtime by train_smolVLA_robocasa_x.sh: PyAV's ffmpeg exposed under plain sonames
 .ffmpeg_shim/
+# fallback used when the "outputs" symlink's NFS target (/dataset/jiyun/outputs) isn't mounted in
+# this environment -- e.g. OUTPUT_DIR=.../outputs_local/... in train_smolVLA_robocasa_v10_traj.sh
+outputs_local/
